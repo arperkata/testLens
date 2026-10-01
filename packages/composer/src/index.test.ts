@@ -21,7 +21,7 @@ describe('composer', () => {
   it('states expected result from the earlier successful calls', () => {
     expect(draft.expectedResult).toContain('observed 200 on 2 earlier call(s)');
     expect(draft.actualResult).toContain('HTTP 500');
-    expect(draft.actualResult).toContain('unhandledrejection');
+    expect(draft.actualResult).toContain('unhandled rejection followed');
   });
 
   it('includes provenance-tagged sections, trace link and cURL', () => {

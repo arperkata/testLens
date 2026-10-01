@@ -32,6 +32,7 @@ export interface StoredIncident {
   postUntil: number;
   status: IncidentStatus;
   error?: string;
+  warnings?: string[];
   note?: string;
   tab: { url: string; title: string; windowId: number };
   context?: BugContext;

@@ -6,7 +6,7 @@ import { newId } from '@testlens/schema';
 import { normalizeBrowserIncident, type RawBrowserIncident } from '@testlens/connectors-browser';
 import { DEFAULT_RULES, RULES_VERSION, mergeRules, redactContext } from '@testlens/redaction';
 import { buildConsoleLog, buildHar, buildNetworkLog, runEvidenceEngine, selectedExchangeIds, DEFAULT_ENGINE_OPTIONS } from '@testlens/evidence-engine';
-import { compose } from '@testlens/composer';
+import { compose, withEvidenceIndex } from '@testlens/composer';
 import { getBlob, getIncident, putBlob, putIncident, readRrweb, readWindow, type StoredIncident } from './buffer/db';
 import { loadSettings, type Settings } from './settings';
 import type { IncidentPatch, PageInfo } from './messages';
@@ -53,6 +53,8 @@ export async function startIncident(tabId: number, note?: string): Promise<Store
     await putBlob(`${incident.incidentId}:screenshot`, incident.incidentId, blob);
   } catch (e) {
     console.warn('[TL] screenshot failed', e);
+    incident.warnings = [...(incident.warnings ?? []), `Screenshot failed: ${e instanceof Error ? e.message : String(e)}`];
+    await putIncident(incident);
   }
 
   // Schedule finalize. setTimeout works while the SW lives; the alarm is the fallback if it is killed.
@@ -173,6 +175,7 @@ export async function patchIncident(incidentId: string, patch: IncidentPatch): P
   if (inc.context && inc.draft) {
     const withText = await writeTextArtifacts(inc as StoredIncident & { context: BugContext; draft: BugDraft });
     inc.context = withText.context;
+    inc.draft = withText.draft;
   }
   await putIncident(inc);
   return inc;
@@ -215,9 +218,11 @@ async function writeTextArtifacts(inc: StoredIncident & { context: BugContext; d
   const screenshotDataUrl = shot ? await blobToDataUrl(shot) : undefined;
   const rrwebEvents = rr ? (JSON.parse(await rr.text()) as unknown[]) : undefined;
   const ctxForViewer: BugContext = { ...ctx, artifacts: [...keep, ...text] };
-  await add('incident-viewer', 'testlens-incident.html', 'text/html', renderViewerHtml(ctxForViewer, inc.draft, { screenshotDataUrl, rrwebEvents }));
+  const draftForViewer = withEvidenceIndex(inc.draft, ctxForViewer);
+  await add('incident-viewer', 'testlens-incident.html', 'text/html', renderViewerHtml(ctxForViewer, draftForViewer, { screenshotDataUrl, rrwebEvents }));
 
-  return { context: { ...ctx, artifacts: [...keep, ...text] }, draft: inc.draft };
+  const finalCtx: BugContext = { ...ctx, artifacts: [...keep, ...text] };
+  return { context: finalCtx, draft: withEvidenceIndex(inc.draft, finalCtx) };
 }
 
 export async function artifactBlobs(inc: StoredIncident, onlyIncluded = true): Promise<{ artifact: Artifact; blob: Blob }[]> {

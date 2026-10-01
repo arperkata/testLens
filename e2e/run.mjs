@@ -24,6 +24,22 @@ function loadPlaywright() {
 }
 const { chromium } = loadPlaywright();
 
+function findPlaywrightChromium() {
+  const base = path.join(os.homedir(), 'AppData/Local/ms-playwright');
+  if (!fs.existsSync(base)) return undefined;
+  const dirs = fs
+    .readdirSync(base)
+    .filter((d) => /^chromium-\d+$/.test(d))
+    .sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]));
+  for (const d of dirs) {
+    for (const sub of ['chrome-win64/chrome.exe', 'chrome-win/chrome.exe', 'chrome-linux/chrome', 'chrome-mac/Chromium.app/Contents/MacOS/Chromium']) {
+      const p = path.join(base, d, sub);
+      if (fs.existsSync(p)) return p;
+    }
+  }
+  return undefined;
+}
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const extPath = path.join(root, 'apps/extension/.output/chrome-mv3');
 if (!fs.existsSync(path.join(extPath, 'manifest.json'))) throw new Error(`extension not built at ${extPath}`);
@@ -43,7 +59,9 @@ const check = (cond, msg) => {
 
 const context = await chromium.launchPersistentContext(userDataDir, {
   headless: false,
+  // Google Chrome ≥137 no longer honours --load-extension; use Chromium (Playwright's or your own via TL_EXE).
   channel: process.env.TL_CHANNEL || undefined,
+  executablePath: process.env.TL_EXE || findPlaywrightChromium(),
   args: [`--disable-extensions-except=${extPath}`, `--load-extension=${extPath}`, '--no-first-run', '--window-size=1400,900'],
   viewport: { width: 1300, height: 800 },
 });
@@ -95,6 +113,20 @@ try {
   );
   const regs = await cfgPage.evaluate(() => chrome.scripting.getRegisteredContentScripts());
   check(regs.length === 2, `content scripts registered for monitored origin (${regs.map((r) => r.id).join(',')})`);
+  if (regs.length !== 2) {
+    const diag = await cfgPage.evaluate(async () => {
+      const out = { perms: await chrome.permissions.getAll(), contains: await chrome.permissions.contains({ origins: ['http://localhost/*'] }) };
+      try {
+        await chrome.scripting.registerContentScripts([{ id: 'diag', js: ['content-scripts/content.js'], matches: ['http://localhost/*'], runAt: 'document_start', allFrames: true, persistAcrossSessions: true }]);
+        out.manual = 'ok';
+        await chrome.scripting.unregisterContentScripts({ ids: ['diag'] });
+      } catch (e) {
+        out.manual = String(e?.message ?? e);
+      }
+      return out;
+    });
+    console.log('  registration diagnostics:', JSON.stringify(diag));
+  }
 
   // ---- drive the app under test ----
   const app = context.pages()[0] ?? (await context.newPage());
@@ -175,8 +207,10 @@ try {
     check(draft.sections.some((s) => s.id === 'curl'), 'curl section present');
 
     // save the viewer & screenshot for manual inspection
+    if (inc.warnings?.length) console.log('  warnings:', inc.warnings.join(' | '));
     for (const kind of ['incident-viewer', 'screenshot', 'har-focused']) {
       const a = ctx.artifacts.find((x) => x.kind === kind);
+      if (!a) continue;
       const b = await cfgPage.evaluate((ref) => chrome.runtime.sendMessage({ type: 'tl:get-blob', blobId: ref }), a.storage.ref);
       const data = Buffer.from(b.data.dataUrl.split(',')[1], 'base64');
       fs.writeFileSync(path.join(outDir, a.fileName), data);

@@ -62,8 +62,9 @@ export function compose(ctx: BugContext, opts: ComposerOptions = {}): BugDraft {
     actual = focalExchange.error
       ? `The request failed at network level (${focalExchange.error.kind}${focalExchange.error.message ? `: ${focalExchange.error.message}` : ''}).`
       : `The request returned HTTP ${focalExchange.response?.status}${focalExchange.response?.statusText ? ` ${focalExchange.response.statusText}` : ''}${focalExchange.timing ? ` after ${Math.round(focalExchange.timing.totalMs)} ms` : ''}.`;
-    const relatedErr = ctx.errors.find((e) => Math.abs(e.ts - focalExchange.ts) < 5000);
-    if (relatedErr) actual += ` A JavaScript ${relatedErr.kind} followed: ${firstLine(relatedErr.message, 120)}`;
+    // only errors that happened after the request started (and soon after) count as consequences
+    const relatedErr = ctx.errors.find((e) => e.ts >= focalExchange.ts && e.ts - focalExchange.ts < 5000);
+    if (relatedErr) actual += ` A JavaScript ${relatedErr.kind === 'unhandledrejection' ? 'unhandled rejection' : relatedErr.kind + ' error'} followed: ${firstLine(relatedErr.message, 120)}`;
   } else if (focalError) {
     expected = 'The page operates without JavaScript errors.';
     actual = `${focalError.kind}: ${firstLine(focalError.message, 200)}`;
@@ -261,6 +262,14 @@ function relatedExchanges(ctx: BugContext, focal?: HttpExchange) {
     return `${hhmmss(e.ts)} ${st.padEnd(7)} ${e.method.toUpperCase().padEnd(6)} ${pathOf(e.url)}  — ${it.reasons[0] ?? ''}`;
   });
   return lines.join('\n');
+}
+
+/** Rebuild the "Evidence attached" section once the final artifact list is known. */
+export function withEvidenceIndex(draft: BugDraft, ctx: BugContext): BugDraft {
+  const section: BugDraftSection = { id: 'evidence-index', title: 'Evidence attached', body: evidenceIndex(ctx), provenance: 'derived' };
+  const idx = draft.sections.findIndex((s) => s.id === 'evidence-index');
+  const sections = idx >= 0 ? draft.sections.map((s, i) => (i === idx ? section : s)) : [...draft.sections, section];
+  return { ...draft, sections };
 }
 
 function evidenceIndex(ctx: BugContext) {

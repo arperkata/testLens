@@ -93,8 +93,9 @@ export function originsToMatchPatterns(origins: string[]): string[] {
       if (o.startsWith('*.')) {
         out.push(`https://${o}/*`, `http://${o}/*`);
       } else {
+        // Chrome match patterns have no port component; a pattern matches every port of the host.
         const u = new URL(o);
-        out.push(`${u.protocol}//${u.host}/*`);
+        out.push(`${u.protocol}//${u.hostname}/*`);
       }
     } catch {
       /* skip invalid */

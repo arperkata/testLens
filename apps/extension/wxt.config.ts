@@ -4,6 +4,9 @@ export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   srcDir: '.',
   outDir: '.output',
+  // Chromium refuses content-script files containing Unicode noncharacters (rrweb's CSS parser
+  // embeds a literal U+FFFE). Escaping non-ASCII in the bundle avoids "It isn't UTF-8 encoded".
+  vite: () => ({ esbuild: { charset: 'ascii' } }),
   manifest: {
     name: 'TestLens',
     short_name: 'TL',
@@ -25,7 +28,8 @@ export default defineConfig({
       delete (manifest as { web_accessible_resources?: unknown }).web_accessible_resources;
       (manifest as { content_scripts?: unknown[] }).content_scripts = [];
       // e2e builds get static localhost access so Playwright can skip the native permission prompt.
-      if (process.env.TL_E2E === '1') (manifest as { host_permissions?: string[] }).host_permissions = ['http://localhost/*', 'http://127.0.0.1/*'];
+      // (<all_urls> also lets captureVisibleTab run without the activeTab grant a real toolbar click provides.)
+      if (process.env.TL_E2E === '1') (manifest as { host_permissions?: string[] }).host_permissions = ['<all_urls>'];
       (manifest as { options_ui?: { page: string; open_in_tab?: boolean } }).options_ui = { page: 'options.html', open_in_tab: true };
     },
   },

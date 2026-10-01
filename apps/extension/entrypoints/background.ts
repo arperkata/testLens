@@ -43,8 +43,10 @@ export default defineBackground(() => {
     }
     if (!matches.length) return;
     // only register for origins we actually have permission for
-    const granted = await chrome.permissions.getAll();
-    const allowed = matches.filter((m) => m === '<all_urls>' ? granted.origins?.includes('<all_urls>') : granted.origins?.some((g) => g === m || g === '<all_urls>' || g === '*://*/*'));
+    const allowed: string[] = [];
+    for (const m of Array.from(new Set(matches))) {
+      if (await chrome.permissions.contains({ origins: [m] }).catch(() => false)) allowed.push(m);
+    }
     if (!allowed.length) return;
     await chrome.scripting.registerContentScripts([
       { id: 'tl-main', js: ['content-scripts/main-world.js'], matches: allowed, world: 'MAIN', runAt: 'document_start', allFrames: true, persistAcrossSessions: true },
