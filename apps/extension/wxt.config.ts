@@ -1,0 +1,32 @@
+import { defineConfig } from 'wxt';
+
+export default defineConfig({
+  modules: ['@wxt-dev/module-react'],
+  srcDir: '.',
+  outDir: '.output',
+  manifest: {
+    name: 'TestLens',
+    short_name: 'TL',
+    description: 'Testing flight recorder: when something goes wrong, TestLens already has the evidence. Review, then create the Jira issue.',
+    version: '0.1.0',
+    minimum_chrome_version: '116',
+    action: { default_title: 'TestLens — Report Issue' },
+    side_panel: { default_path: 'sidepanel.html' },
+    options_ui: { page: 'options.html', open_in_tab: true },
+    permissions: ['storage', 'unlimitedStorage', 'tabs', 'webRequest', 'scripting', 'alarms', 'sidePanel', 'activeTab', 'webNavigation'],
+    // Host access is requested at runtime, per origin the tester chooses to monitor (plus the Jira site).
+    optional_host_permissions: ['<all_urls>'],
+  },
+  hooks: {
+    'build:manifestGenerated': (_wxt, manifest) => {
+      // Runtime-registered content scripts make WXT add their `matches` to host_permissions.
+      // We request host access at runtime instead, so strip the static grant.
+      delete (manifest as { host_permissions?: string[] }).host_permissions;
+      delete (manifest as { web_accessible_resources?: unknown }).web_accessible_resources;
+      (manifest as { content_scripts?: unknown[] }).content_scripts = [];
+      // e2e builds get static localhost access so Playwright can skip the native permission prompt.
+      if (process.env.TL_E2E === '1') (manifest as { host_permissions?: string[] }).host_permissions = ['http://localhost/*', 'http://127.0.0.1/*'];
+      (manifest as { options_ui?: { page: string; open_in_tab?: boolean } }).options_ui = { page: 'options.html', open_in_tab: true };
+    },
+  },
+});
