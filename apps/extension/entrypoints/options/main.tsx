@@ -36,6 +36,7 @@ function Options() {
       <MonitoringSection s={s} update={update} persist={persist} setMsg={setMsg} />
       <CaptureSection s={s} update={update} persist={persist} />
       <TrackerSection s={s} update={update} persist={persist} setMsg={setMsg} />
+      <AiSection s={s} update={update} persist={persist} setMsg={setMsg} />
       <PrivacySection s={s} update={update} persist={persist} />
       <TraceSection s={s} update={update} persist={persist} />
       <DataSection s={s} update={update} persist={persist} setMsg={setMsg} />
@@ -494,6 +495,78 @@ function TrackerSection({ s, update, persist, setMsg }: SectionProps) {
   );
 }
 
+function AiSection({ s, update, persist, setMsg }: SectionProps) {
+  const ai = s.ai;
+  const setAi = (p: Partial<typeof ai>) => update({ ai: { ...ai, ...p } });
+  const [testing, setTesting] = useState(false);
+  const [ok, setOk] = useState<string>();
+  const connect = async () => {
+    setTesting(true);
+    try {
+      const origin = `${new URL(ai.baseUrl).origin}/*`;
+      const granted = await chrome.permissions.request({ origins: [origin] });
+      if (!granted) throw new Error(`Permission to call ${new URL(ai.baseUrl).origin} was not granted`);
+      const next = { ...ai, enabled: true };
+      await persist({ ...s, ai: next });
+      const r = await sendRuntime<{ model: string }>({ type: 'tl:ai-test', ai: next });
+      setOk(r.model);
+      setMsg?.({ kind: 'ok', text: `AI connected (${r.model})` });
+    } catch (e) {
+      setMsg?.({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setTesting(false);
+    }
+  };
+  return (
+    <div className="card">
+      <h2 style={{ marginTop: 0 }}>4. AI analysis (optional)</h2>
+      <p className="muted">
+        An AI model can rewrite the steps to reproduce from the actions recorded in the rolling window and draft summary, expected/actual and a technical analysis. Suggestions appear on the Bug tab and replace nothing until you click Apply; applied text is marked as AI in the bug. Off by default.
+      </p>
+      <div className="card" style={{ background: 'var(--panel2)' }}>
+        <b>What is sent to the provider</b>
+        <p className="muted" style={{ margin: '4px 0 0' }}>
+          Redacted only: the click/input/navigation trail with timestamps, the focal request's method, URL path, status, duration and a short body snippet (optional below), console errors, JavaScript errors, the engine's observations and your current draft. Never sent: headers, cookies, tokens, full bodies, screenshots, replay, video. The exact payload is viewable per bug via "What is sent?".
+        </p>
+      </div>
+      <div className="row between" style={{ marginTop: 8 }}>
+        <label className="inline" style={{ margin: 0 }}><input type="checkbox" checked={ai.enabled} onChange={(e) => setAi({ enabled: e.target.checked })} /> Enable AI analysis</label>
+        <button className="primary small" onClick={() => chrome.tabs.create({ url: 'https://platform.openai.com/api-keys' })}>Open OpenAI API keys page ↗</button>
+      </div>
+      <div className="row" style={{ gap: 12 }}>
+        <div style={{ flex: 1, minWidth: 160 }}>
+          <label>Provider</label>
+          <select value={ai.provider} onChange={(e) => setAi({ provider: e.target.value as 'openai' })}>
+            <option value="openai">OpenAI</option>
+          </select>
+        </div>
+        <div style={{ flex: 1, minWidth: 160 }}>
+          <label>Model</label>
+          <input value={ai.model} onChange={(e) => setAi({ model: e.target.value.trim() })} placeholder="gpt-4o-mini" />
+        </div>
+        <div style={{ flex: 2, minWidth: 220 }}>
+          <label>API base URL</label>
+          <input value={ai.baseUrl} onChange={(e) => setAi({ baseUrl: e.target.value.trim() })} placeholder="https://api.openai.com/v1" title="Azure OpenAI or a compatible gateway can be used by changing this" />
+        </div>
+        <div style={{ flex: 3, minWidth: 240 }}>
+          <label>API key</label>
+          <input type="password" value={ai.apiKey} onChange={(e) => setAi({ apiKey: e.target.value.trim() })} />
+          <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>Stored only in this browser profile; never synced or exported.</div>
+        </div>
+      </div>
+      <div style={{ marginTop: 6 }}>
+        <label className="inline"><input type="checkbox" checked={ai.autoRun} onChange={(e) => setAi({ autoRun: e.target.checked })} /> Run automatically when I click Report Issue</label>
+        <label className="inline"><input type="checkbox" checked={ai.includeBodies} onChange={(e) => setAi({ includeBodies: e.target.checked })} /> Include short redacted body snippets of the failed request</label>
+      </div>
+      <div className="row" style={{ marginTop: 10 }}>
+        <button className="primary" onClick={connect} disabled={testing || !ai.apiKey || !ai.baseUrl}>{testing ? 'Testing…' : 'Connect & test'}</button>
+        <button onClick={() => persist()}>Save</button>
+        {ok && <span className="ok">Model reachable: {ok}</span>}
+      </div>
+    </div>
+  );
+}
+
 function PrivacySection({ s, update, persist }: SectionProps) {
   const [keys, setKeys] = useState(s.redaction.extraKeys.join(', '));
   const [patterns, setPatterns] = useState(s.redaction.extraPatterns.map((p) => `${p.id} = ${p.regex}`).join('\n'));
@@ -508,7 +581,7 @@ function PrivacySection({ s, update, persist }: SectionProps) {
   };
   return (
     <div className="card">
-      <h2 style={{ marginTop: 0 }}>4. Redaction</h2>
+      <h2 style={{ marginTop: 0 }}>5. Redaction</h2>
       <p className="muted">
         Built-in rules always mask: authorization, cookie, set-cookie, x-api-key, password, token, access_token, refresh_token, client_secret, api_key, secret, session ids, OTP/PIN/SSN/CVV/card fields, plus JWTs, bearer tokens, AWS/GitHub/OpenAI/Slack key formats and card-number-like digit runs. Masked values keep a short hash so equal values stay correlatable.
       </p>
@@ -534,7 +607,7 @@ function TraceSection({ s, update, persist }: SectionProps) {
   };
   return (
     <div className="card">
-      <h2 style={{ marginTop: 0 }}>5. Backend trace links & noise</h2>
+      <h2 style={{ marginTop: 0 }}>6. Backend trace links & noise</h2>
       <p className="muted">When a failed response carries a correlation header, TestLens adds a deep link into your logging/tracing tool. One per line: “header = URL template with {'{value}'}”. Use “*” as the header to apply to any correlation id.</p>
       <textarea className="mono" value={text} onChange={(e) => setText(e.target.value)} placeholder={'x-request-id = https://logs.example.com/app/discover#/?_a=(query:(query:\'{value}\'))\ntraceparent = https://tempo.example.com/trace/{value}'} />
       <label>Extra telemetry hosts to ignore (comma separated)</label>
@@ -554,7 +627,7 @@ function DataSection({ s, update, persist, setMsg }: SectionProps) {
   };
   return (
     <div className="card">
-      <h2 style={{ marginTop: 0 }}>6. Data</h2>
+      <h2 style={{ marginTop: 0 }}>7. Data</h2>
       <p className="muted">Buffers expire continuously (older than the rolling window). Frozen incidents are kept locally and purged automatically.</p>
       <label>Keep incidents for (days)</label>
       <input type="number" min={1} max={90} value={s.retentionDays} onChange={(e) => update({ retentionDays: Number(e.target.value) })} style={{ width: 100 }} />

@@ -194,7 +194,7 @@ function IncidentView({ incident, onBack, reload, setIncident }: { incident: Inc
         <button className={tab === 'jira' ? 'active' : ''} onClick={() => setTab('jira')}>Tracker</button>
       </div>
 
-      {tab === 'bug' && <BugTab ctx={ctx} draft={draft} incident={incident} onPatch={patch} onRerun={(f) => run('rerun', async () => setIncident(await sendRuntime<Incident>({ type: 'tl:rerun-engine', incidentId: incident.incidentId, focal: f })))} />}
+      {tab === 'bug' && <BugTab ctx={ctx} draft={draft} incident={incident} onPatch={patch} onAiApplied={setIncident} onRerun={(f) => run('rerun', async () => setIncident(await sendRuntime<Incident>({ type: 'tl:rerun-engine', incidentId: incident.incidentId, focal: f })))} />}
       {tab === 'evidence' && <EvidenceTab ctx={ctx} incident={incident} onPatch={patch} />}
       {tab === 'jira' && <TrackerTab incident={incident} setIncident={setIncident} onPatch={patch} />}
 
@@ -210,7 +210,7 @@ function IncidentView({ incident, onBack, reload, setIncident }: { incident: Inc
 
 // ---------------------------------------------------------------------------
 
-function BugTab({ ctx, draft, incident, onPatch, onRerun }: { ctx: BugContext; draft: BugDraft; incident: Incident; onPatch: (p: import('../../src/messages').IncidentPatch) => void; onRerun: (f?: { kind: FocalEvent['kind']; refId: string }) => void }) {
+function BugTab({ ctx, draft, incident, onPatch, onRerun, onAiApplied }: { ctx: BugContext; draft: BugDraft; incident: Incident; onPatch: (p: import('../../src/messages').IncidentPatch) => void; onRerun: (f?: { kind: FocalEvent['kind']; refId: string }) => void; onAiApplied: (i: Incident) => void }) {
   const [summary, setSummary] = useState(draft.summary);
   const [steps, setSteps] = useState(draft.stepsToReproduce.join('\n'));
   const [expected, setExpected] = useState(draft.expectedResult);
@@ -268,9 +268,13 @@ function BugTab({ ctx, draft, incident, onPatch, onRerun }: { ctx: BugContext; d
         )}
       </div>
 
-      <label>Summary</label>
+      <AiPanel ctx={ctx} draft={draft} incident={incident} onApplied={onAiApplied} />
+
+      <label>Summary{draft.aiApplied?.includes('summary') && <span className="badge ai">AI</span>}</label>
       <input value={summary} onChange={(e) => setSummary(e.target.value)} maxLength={255} />
-      <label>Steps to reproduce (one per line) <span className="badge derived">derived from your clicks and navigation</span></label>
+      <label>
+        Steps to reproduce (one per line) {draft.aiApplied?.includes('stepsToReproduce') ? <span className="badge ai">AI, from your recorded actions</span> : <span className="badge derived">derived from your clicks and navigation</span>}
+      </label>
       <textarea value={steps} onChange={(e) => setSteps(e.target.value)} style={{ minHeight: 110 }} />
       <label>Expected result</label>
       <textarea value={expected} onChange={(e) => setExpected(e.target.value)} />
@@ -296,6 +300,124 @@ function BugTab({ ctx, draft, incident, onPatch, onRerun }: { ctx: BugContext; d
       <p className="muted">Sections are generated from captured data. Edit the fields above; toggle evidence items on the Evidence tab to change what appears here.</p>
       {incident.note && <p className="muted">Your note: “{incident.note}”</p>}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Optional AI suggestions. Facts stay facts: the suggestion is shown beside the deterministic
+ * draft and only replaces a field when the tester clicks Apply.
+ */
+function AiPanel({ ctx, draft, incident, onApplied }: { ctx: BugContext; draft: BugDraft; incident: Incident; onApplied: (i: Incident) => void }) {
+  const [enabled, setEnabled] = useState<boolean>();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string>();
+  const [showSent, setShowSent] = useState(false);
+  const [sent, setSent] = useState<unknown>();
+  useEffect(() => {
+    void loadSettings().then((s) => setEnabled(s.ai.enabled && Boolean(s.ai.apiKey)));
+  }, []);
+  const a = ctx.analysis;
+  const run = async () => {
+    setBusy(true);
+    setErr(undefined);
+    try {
+      onApplied(await sendRuntime<Incident>({ type: 'tl:ai-enhance', incidentId: incident.incidentId }));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const applyFields = async (fields: ('summary' | 'stepsToReproduce' | 'expectedResult' | 'actualResult')[]) => {
+    setBusy(true);
+    try {
+      onApplied(await sendRuntime<Incident>({ type: 'tl:ai-apply', incidentId: incident.incidentId, fields }));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const showSentPayload = async () => {
+    if (!sent) setSent(await sendRuntime({ type: 'tl:ai-projection', incidentId: incident.incidentId }));
+    setShowSent((v) => !v);
+  };
+
+  if (enabled === undefined) return null;
+  if (!enabled)
+    return (
+      <div className="card" style={{ borderStyle: 'dashed' }}>
+        <div className="row between">
+          <span className="muted">
+            <span className="badge ai" style={{ marginLeft: 0 }}>AI</span> Optional: let an AI model rewrite the steps to reproduce from your recorded actions and draft the analysis. Off until you add an API key.
+          </span>
+          <button className="small" onClick={() => chrome.runtime.openOptionsPage()}>Set up in Settings</button>
+        </div>
+      </div>
+    );
+
+  const applied = new Set(draft.aiApplied ?? []);
+  const field = (key: 'summary' | 'stepsToReproduce' | 'expectedResult' | 'actualResult', title: string, body: string | undefined) =>
+    body ? (
+      <div style={{ marginTop: 8 }}>
+        <div className="row between">
+          <b>{title}</b>
+          <button className="small" disabled={busy || applied.has(key)} onClick={() => applyFields([key])}>
+            {applied.has(key) ? 'Applied' : 'Apply'}
+          </button>
+        </div>
+        <pre style={{ maxHeight: 160, marginTop: 4 }}>{body}</pre>
+      </div>
+    ) : null;
+
+  return (
+    <div className="card" style={{ borderColor: 'var(--ai)' }}>
+      <div className="row between">
+        <b>
+          <span className="badge ai" style={{ marginLeft: 0 }}>AI</span> {a ? `Suggestions from ${a.provider}/${a.model}` : 'AI suggestions'}
+          {a && <span className="badge">{a.confidence} confidence</span>}
+        </b>
+        <span className="row" style={{ gap: 6 }}>
+          <button className="small" onClick={showSentPayload} title="Exactly what is sent to the AI provider (redacted, no headers, no cookies, no screenshots)">
+            {showSent ? 'Hide what is sent' : 'What is sent?'}
+          </button>
+          <button className="small primary" disabled={busy} onClick={run}>
+            {busy ? 'Analysing…' : a ? 'Re-run' : 'Enhance with AI'}
+          </button>
+        </span>
+      </div>
+      {err && <p className="err">{err}</p>}
+      {showSent && <pre style={{ maxHeight: 240 }}>{JSON.stringify(sent, null, 2)}</pre>}
+      {a && (
+        <>
+          <p className="muted" style={{ marginTop: 6 }}>AI output is a suggestion. Captured facts above are unchanged until you click Apply; applied fields are marked in the bug and in the description.</p>
+          {field('stepsToReproduce', 'Steps to reproduce (from your recorded actions)', a.stepsToReproduce?.map((s, i) => `${i + 1}. ${s}`).join('\n'))}
+          {field('summary', 'Summary', a.summary)}
+          {field('expectedResult', 'Expected result', a.expectedResult)}
+          {field('actualResult', 'Actual result', a.actualResult)}
+          {a.technicalAnalysis && (
+            <div style={{ marginTop: 8 }}>
+              <b>Technical analysis</b> <span className="muted">(goes into the description as an "AI analysis" section)</span>
+              <pre style={{ maxHeight: 160, marginTop: 4 }}>{a.technicalAnalysis}{a.possibleComponent ? `\n\nPossible component: ${a.possibleComponent}` : ''}</pre>
+            </div>
+          )}
+          {a.caveats.length > 0 && (
+            <ul className="muted" style={{ margin: '6px 0 0 16px', padding: 0 }}>
+              {a.caveats.map((c, i) => (
+                <li key={i}>⚠ {c}</li>
+              ))}
+            </ul>
+          )}
+          <div className="row" style={{ marginTop: 8 }}>
+            <button className="small" disabled={busy || applied.size >= 4} onClick={() => applyFields(['stepsToReproduce', 'summary', 'expectedResult', 'actualResult'])}>
+              Apply all
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

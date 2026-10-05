@@ -8,6 +8,7 @@ import { clearTab, expire, deleteIncident, getBlob, getIncident, listIncidents, 
 import { ingestPageExchange, installNetworkCapture } from '../src/capture/network';
 import { finalizeIncident, patchIncident, redactionTotals, rememberPageInfo, rerunEngine, startIncident } from '../src/incident';
 import * as tracker from '../src/tracker';
+import * as ai from '../src/ai';
 import { isRecording, markEnded, recordingSince, recordingSupported, startRecording, startSyntheticRecording, stopRecording } from '../src/recording';
 import { expireVideo } from '../src/buffer/db';
 import type { OffscreenEvent } from '../src/messages';
@@ -301,6 +302,14 @@ export default defineBackground(() => {
       case 'tl:stop-tab-recording':
         await stopRecording(req.tabId);
         return true;
+      case 'tl:ai-enhance':
+        return ai.enhance(req.incidentId);
+      case 'tl:ai-apply':
+        return ai.apply(req.incidentId, req.fields);
+      case 'tl:ai-projection':
+        return ai.projection(req.incidentId);
+      case 'tl:ai-test':
+        return ai.testConnection(req.ai);
       case 'tl:start-synthetic-recording':
         await startSyntheticRecording(req.tabId, req.options);
         return true;

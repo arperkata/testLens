@@ -28,7 +28,8 @@
     "@testlens/trackers-azure-devops": "*",
     "@testlens/trackers-github": "*",
     "@testlens/trackers-gitlab": "*",
-    "@testlens/trackers-linear": "*"
+    "@testlens/trackers-linear": "*",
+    "@testlens/ai": "*"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

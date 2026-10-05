@@ -129,6 +129,15 @@ export async function finalizeIncident(incidentId: string): Promise<StoredIncide
     const withText = await writeTextArtifacts({ ...inc, context, draft });
     await putIncident({ ...inc, status: 'ready', context: withText.context, draft: withText.draft });
     void chrome.alarms.clear(`tl-finalize:${incidentId}`);
+    // Optional AI pass runs after the incident is usable, so a slow or failing provider never blocks review.
+    if (settings.ai.enabled && settings.ai.autoRun && settings.ai.apiKey) {
+      void import('./ai')
+        .then((m) => m.enhance(incidentId))
+        .catch(async (e) => {
+          const cur = await getIncident(incidentId);
+          if (cur) await putIncident({ ...cur, warnings: [...(cur.warnings ?? []), `AI analysis failed: ${e instanceof Error ? e.message : String(e)}`] });
+        });
+    }
     return getIncident(incidentId);
   } catch (e) {
     const msg = e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : String(e);
@@ -198,6 +207,29 @@ export async function patchIncident(incidentId: string, patch: IncidentPatch): P
   }
   await putIncident(inc);
   return inc;
+}
+
+/**
+ * Recompose derived sections (e.g. after an AI analysis arrives) while keeping the tester's
+ * summary/steps/expected/actual/labels and the AI-applied markers, then refresh text artifacts.
+ */
+export async function recomposeIncident(inc: StoredIncident): Promise<StoredIncident> {
+  if (!inc.context || !inc.draft) return inc;
+  const settings = await loadSettings();
+  const fresh = compose(inc.context, { traceLinkTemplates: settings.traceLinkTemplates });
+  const draft: BugDraft = {
+    ...fresh,
+    summary: inc.draft.summary,
+    stepsToReproduce: inc.draft.stepsToReproduce,
+    expectedResult: inc.draft.expectedResult,
+    actualResult: inc.draft.actualResult,
+    labels: inc.draft.labels,
+    aiApplied: inc.draft.aiApplied,
+  };
+  const withText = await writeTextArtifacts({ ...inc, context: inc.context, draft });
+  const updated: StoredIncident = { ...inc, context: withText.context, draft: withText.draft };
+  await putIncident(updated);
+  return updated;
 }
 
 function pickUserEdited(current: BugDraft, fresh: BugDraft): Partial<BugDraft> {

@@ -78,7 +78,11 @@ export type RuntimeRequest =
   | { type: 'tl:stop-tab-recording'; tabId: number }
   | { type: 'tl:recording-status' }
   /** test hook: record a synthetic canvas stream for a tab (no tabCapture permission needed) */
-  | { type: 'tl:start-synthetic-recording'; tabId: number; options?: Partial<RecordingOptions> };
+  | { type: 'tl:start-synthetic-recording'; tabId: number; options?: Partial<RecordingOptions> }
+  | { type: 'tl:ai-enhance'; incidentId: string }
+  | { type: 'tl:ai-apply'; incidentId: string; fields: ('summary' | 'stepsToReproduce' | 'expectedResult' | 'actualResult')[] }
+  | { type: 'tl:ai-projection'; incidentId: string }
+  | { type: 'tl:ai-test'; ai: import('./settings').AiSettings };
 
 /** Messages addressed to the offscreen recorder document (ignored by the background). */
 export type OffscreenRequest =

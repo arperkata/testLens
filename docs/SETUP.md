@@ -177,6 +177,19 @@ When you pick an issue type, TestLens reads the project's create screen and show
 
 Summary, description, project and issue type are always filled by TestLens and need no mapping. The Jira tab in the side panel validates the payload against the required fields before Create is enabled.
 
+### 4.4a AI analysis (optional, off by default)
+
+TestLens can ask an AI model to rewrite the **steps to reproduce** from the actions recorded in the rolling window and to draft summary, expected/actual and a short technical analysis. Settings → **AI analysis**:
+
+1. Click **Open OpenAI API keys page**, create a key, paste it into **API key**. The key is stored only in this browser profile and is never synced or exported.
+2. Keep the default model (`gpt-4o-mini`) or set another. **API base URL** can point to Azure OpenAI or any OpenAI-compatible gateway.
+3. Tick **Enable AI analysis**, click **Connect & test**, accept the permission prompt for the API host.
+4. **Run automatically when I click Report Issue** prepares the suggestion while the incident is assembled; otherwise use **Enhance with AI** on the Bug tab.
+
+What is sent, always redacted first: the click/input/navigation trail with relative timestamps, the focal request's method, URL path, status, duration and (optionally) a short body snippet, console errors, JavaScript errors, the evidence engine's observations and the current draft. Never sent: headers, cookies, tokens, full bodies, screenshots, replay, video. The exact payload for any bug is shown by **What is sent?** on the Bug tab.
+
+What comes back is a suggestion. The Bug tab shows it beside the captured facts; **Apply** per field or **Apply all** copies it into the draft, and applied fields are badged "AI" in the panel and in the issue description. The technical analysis goes into the description as a clearly marked "AI analysis" section with the model's confidence and caveats. Nothing AI-written reaches the tracker without those clicks.
+
 ### 4.5 Redaction rules
 
 Built-in rules always run and cannot be disabled. They mask header, query, form and JSON values whose key matches: authorization, proxy-authorization, cookie, set-cookie, x-api-key, x-auth-token, x-csrf-token, password, passwd, pwd, secret, client_secret, token, access_token, refresh_token, id_token, api_key, private_key, session, sessionid, otp, pin, ssn, cvv, card_number. Pattern rules catch JWTs, bearer tokens, AWS, OpenAI, GitHub and Slack key formats and card-number-like digit runs anywhere in text.

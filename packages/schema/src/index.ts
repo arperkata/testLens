@@ -356,6 +356,8 @@ export const BugDraft = z.object({
   labels: z.array(z.string()),
   environmentSummary: z.string(),
   focalSignature: z.string().optional(),
+  /** Draft fields the tester replaced with AI suggestions (kept so the description can mark them). */
+  aiApplied: z.array(z.enum(['summary', 'stepsToReproduce', 'expectedResult', 'actualResult'])).optional(),
 });
 export type BugDraft = z.infer<typeof BugDraft>;
 

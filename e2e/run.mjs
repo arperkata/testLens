@@ -95,6 +95,7 @@ try {
         traceLinkTemplates: { 'x-request-id': 'https://logs.example.com/?q={value}' },
         telemetryHostsExtra: [],
         retentionDays: 7,
+        ai: { enabled: true, provider: 'openai', apiKey: 'test-key', model: 'gpt-4o-mini', baseUrl: `${APP}/openai/v1`, autoRun: false, includeBodies: true },
         onboarded: true,
         tracker: {
           trackerId: 'jira-cloud',
@@ -231,12 +232,37 @@ try {
     }
   }
 
+  // ---- AI enhancement against the mock OpenAI ----
+  const projection = await cfgPage.evaluate((id) => chrome.runtime.sendMessage({ type: 'tl:ai-projection', incidentId: id }), incidentId);
+  check(projection.ok, `AI projection built (${projection.ok ? '' : projection.error})`);
+  if (projection.ok) {
+    const pj = JSON.stringify(projection.data);
+    check(projection.data.actions.some((a) => a.kind === 'click' && a.detail.includes('Submit receipt')), 'projection contains the recorded click trail');
+    check(!pj.includes('authorization') && !pj.includes('cookie') && !pj.includes('hunter2') && !pj.includes('secret-token-value'), 'projection contains no headers or secrets');
+    check(!pj.includes('data:image'), 'projection contains no screenshot');
+  }
+  const enhanced = await cfgPage.evaluate((id) => chrome.runtime.sendMessage({ type: 'tl:ai-enhance', incidentId: id }), incidentId);
+  check(enhanced.ok, `AI enhance ok (${enhanced.ok ? '' : enhanced.error})`);
+  if (enhanced.ok) {
+    const an = enhanced.data.context.analysis;
+    check(an?.provenance === 'ai' && an.stepsToReproduce?.length >= 3, `analysis stored with provenance=ai (${an?.stepsToReproduce?.length} steps)`);
+    check(enhanced.data.draft.stepsToReproduce.join() !== an.stepsToReproduce.join(), 'draft unchanged until the tester applies');
+    const applied = await cfgPage.evaluate((id) => chrome.runtime.sendMessage({ type: 'tl:ai-apply', incidentId: id, fields: ['stepsToReproduce'] }), incidentId);
+    check(applied.ok && applied.data.draft.stepsToReproduce.join() === an.stepsToReproduce.join(), 'applying AI steps replaces the draft steps');
+    check(applied.data.draft.aiApplied?.includes('stepsToReproduce'), 'applied field recorded as AI');
+    // the description must now carry the AI section and the Jira preview still validates
+    const prev2 = await cfgPage.evaluate((id) => chrome.runtime.sendMessage({ type: 'tl:tracker-preview', incidentId: id }), incidentId);
+    check(prev2.ok && prev2.data.descriptionText.includes('AI analysis'), 'description includes the marked AI analysis section');
+  }
+
   // ---- side panel renders ----
   const panel = await context.newPage();
   await panel.goto(`chrome-extension://${extId}/sidepanel.html`);
   await panel.waitForTimeout(1500);
   const panelText = await panel.textContent('body');
   check(panelText.includes('Focal event') || panelText.includes('Incidents'), 'side panel renders');
+  check(panelText.includes('Suggestions from openai'), 'Bug tab shows the AI suggestions panel');
+  check(panelText.includes('AI, from your recorded actions'), 'applied steps are labelled as AI');
   await panel.screenshot({ path: path.join(outDir, 'sidepanel.png'), fullPage: true });
   // Evidence tab: expand the focal exchange to verify the request/response detail view
   await panel.click('.tabs button:nth-child(2)');

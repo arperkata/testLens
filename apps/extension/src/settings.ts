@@ -24,6 +24,20 @@ export interface TrackerSettings {
   mapping: TrackerMapping;
 }
 
+export interface AiSettings {
+  enabled: boolean;
+  provider: 'openai';
+  apiKey: string;
+  model: string;
+  baseUrl: string;
+  /** Run analysis automatically when an incident is finalized. */
+  autoRun: boolean;
+  /** Include short (redacted) request/response body snippets of the focal request in what is sent. */
+  includeBodies: boolean;
+}
+
+export const DEFAULT_AI: AiSettings = { enabled: false, provider: 'openai', apiKey: '', model: 'gpt-4o-mini', baseUrl: 'https://api.openai.com/v1', autoRun: true, includeBodies: true };
+
 /** @deprecated pre-multi-tracker shape; migrated to `tracker` on load. */
 export type JiraSettings = Omit<TrackerSettings, 'trackerId' | 'projectName'>;
 
@@ -51,6 +65,8 @@ export interface Settings {
   /** Which artifact kinds are pre-ticked for attachment; the tester can still change each one before Create. */
   attachDefaults: Record<string, boolean>;
   tracker?: TrackerSettings;
+  /** Optional AI analysis. Off by default; the key is stored locally and never syncs. */
+  ai: AiSettings;
   /** @deprecated legacy field kept only so old stored settings can be migrated. */
   jira?: JiraSettings;
   /** Set once the user has completed the first-run wizard. */
@@ -73,6 +89,7 @@ export const DEFAULT_SETTINGS: Settings = {
   retentionDays: 7,
   autoRecordOnOpen: true,
   attachDefaults: { screenshot: true, video: true, rrweb: true, 'console-log': true, 'network-log': true, 'har-focused': true, har: false, 'incident-viewer': true },
+  ai: DEFAULT_AI,
   onboarded: false,
 };
 
@@ -109,19 +126,26 @@ export async function loadSettings(): Promise<Settings> {
     }
   }
   if (!stored) stored = (await chrome.storage.local.get(KEY))[KEY] as Partial<Settings> | undefined;
-  const secrets = ((await chrome.storage.local.get(SECRETS_KEY))[SECRETS_KEY] ?? {}) as { jiraToken?: string; trackerToken?: string };
-  const s: Settings = { ...DEFAULT_SETTINGS, ...(stored ?? {}), redaction: { ...DEFAULT_SETTINGS.redaction, ...(stored?.redaction ?? {}) }, attachDefaults: { ...DEFAULT_SETTINGS.attachDefaults, ...(stored?.attachDefaults ?? {}) } };
+  const secrets = ((await chrome.storage.local.get(SECRETS_KEY))[SECRETS_KEY] ?? {}) as { jiraToken?: string; trackerToken?: string; aiKey?: string };
+  const s: Settings = {
+    ...DEFAULT_SETTINGS,
+    ...(stored ?? {}),
+    redaction: { ...DEFAULT_SETTINGS.redaction, ...(stored?.redaction ?? {}) },
+    attachDefaults: { ...DEFAULT_SETTINGS.attachDefaults, ...(stored?.attachDefaults ?? {}) },
+    ai: { ...DEFAULT_AI, ...(stored?.ai ?? {}) },
+  };
   // Migrate the pre-multi-tracker `jira` block into `tracker`.
   if (!s.tracker && s.jira) s.tracker = { trackerId: 'jira-cloud', ...s.jira };
   delete s.jira;
   if (s.tracker) s.tracker = { ...s.tracker, token: secrets.trackerToken ?? secrets.jiraToken ?? s.tracker.token ?? '' };
+  s.ai.apiKey = secrets.aiKey ?? s.ai.apiKey ?? '';
   return s;
 }
 
 export async function saveSettings(s: Settings): Promise<void> {
   const token = s.tracker?.token ?? '';
-  const shareable: Settings = { ...s, jira: undefined, tracker: s.tracker ? { ...s.tracker, token: '' } : undefined };
-  await chrome.storage.local.set({ [SECRETS_KEY]: { trackerToken: token } });
+  const shareable: Settings = { ...s, jira: undefined, tracker: s.tracker ? { ...s.tracker, token: '' } : undefined, ai: { ...s.ai, apiKey: '' } };
+  await chrome.storage.local.set({ [SECRETS_KEY]: { trackerToken: token, aiKey: s.ai.apiKey ?? '' } });
   const sync = syncArea();
   let synced = false;
   if (sync) {
@@ -146,8 +170,8 @@ export function onSettingsChanged(cb: (s: Settings) => void): () => void {
 
 /** Settings as a shareable JSON document (no token). */
 export function exportSettings(s: Settings): string {
-  const { tracker, jira: _legacy, ...rest } = s;
-  return JSON.stringify({ testlensSettings: 1, ...rest, tracker: tracker ? { ...tracker, token: undefined } : undefined }, null, 2);
+  const { tracker, jira: _legacy, ai, ...rest } = s;
+  return JSON.stringify({ testlensSettings: 1, ...rest, tracker: tracker ? { ...tracker, token: undefined } : undefined, ai: { ...ai, apiKey: undefined } }, null, 2);
 }
 
 /** Merge an exported document into current settings. Keeps the local token when the tracker is unchanged. */
@@ -163,6 +187,7 @@ export function importSettings(current: Settings, json: string): Settings {
     jira: undefined,
     redaction: { ...current.redaction, ...(incoming.redaction ?? {}) },
     tracker: incomingTracker ? { ...incomingTracker, token: keepToken ? current.tracker!.token : '' } : current.tracker,
+    ai: { ...DEFAULT_AI, ...current.ai, ...(incoming.ai ?? {}), apiKey: current.ai.apiKey },
     onboarded: true,
   };
 }

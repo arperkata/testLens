@@ -93,6 +93,32 @@ console.log('fixture booted');
       }
       return json(404, { errorMessages: [`no mock for ${req.method} ${p}`] });
     }
+    // ---- mock OpenAI (chat completions with structured output) ----
+    if (url.pathname.startsWith('/openai/v1/')) {
+      if (!req.headers.authorization?.startsWith('Bearer ')) return json(401, { error: { message: 'Incorrect API key provided' } });
+      const p = url.pathname.slice('/openai/v1/'.length);
+      if (p.startsWith('models/')) return json(200, { id: decodeURIComponent(p.slice(7)), object: 'model' });
+      if (p === 'chat/completions' && req.method === 'POST') {
+        const payload = JSON.parse(body.toString());
+        jira.aiRequests = (jira.aiRequests ?? 0) + 1;
+        jira.lastAiPayload = payload;
+        const evidence = JSON.parse(payload.messages.find((m) => m.role === 'user').content.replace(/^Evidence \(JSON\):\n/, ''));
+        const clicks = evidence.actions.filter((a) => a.kind === 'click').map((a) => `Click "${a.detail}"`);
+        const content = JSON.stringify({
+          summary: `Submitting the receipt fails with HTTP ${evidence.focal?.status ?? 500} on ${evidence.application.title ?? 'the page'}`,
+          stepsToReproduce: [`Open ${evidence.application.url}`, ...clicks, 'Observe the error after submitting the receipt'],
+          expectedResult: 'The receipt is created and a confirmation is shown.',
+          actualResult: `The POST to ${evidence.focal?.url} returns ${evidence.focal?.status} and the page logs an unhandled rejection.`,
+          technicalAnalysis: 'The receipt endpoint failed after two earlier successful calls in the same session, which suggests a server-side state or timeout issue rather than a client validation error. Hypothesis: a database timeout on the receipt service.',
+          possibleComponent: 'receipt service',
+          confidence: 'medium',
+          caveats: ['Server logs were not available; the database-timeout hypothesis is inferred from the response body only.'],
+        });
+        return json(200, { id: 'chatcmpl-mock', model: payload.model, choices: [{ index: 0, message: { role: 'assistant', content } }] });
+      }
+      return json(404, { error: { message: `no mock for ${req.method} ${p}` } });
+    }
+
     if (url.pathname === '/__state') return json(200, { receiptCalls, jira });
     res.writeHead(404);
     res.end('not found');
