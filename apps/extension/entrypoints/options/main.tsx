@@ -136,8 +136,24 @@ function JiraSection({ s, update, persist, setMsg }: SectionProps) {
   const [types, setTypes] = useState<IssueTypeRef[]>();
   const [fields, setFields] = useState<FieldSchema[]>();
   const [testing, setTesting] = useState(false);
-  const [mappingText, setMappingText] = useState(JSON.stringify(j.mapping.fields, null, 2));
+  const [loadingFields, setLoadingFields] = useState(false);
   const [who, setWho] = useState<string>();
+  /** Values chosen in the guided form, keyed by field key. Strings; comma-separated for multi-value. */
+  const [values, setValues] = useState<Record<string, string>>(() => stringValues(j.mapping.fields));
+  const [advanced, setAdvanced] = useState(false);
+  const [mappingText, setMappingText] = useState(JSON.stringify(j.mapping.fields, null, 2));
+
+  // When the saved project/type already exist, load their fields so the form can render.
+  useEffect(() => {
+    if (j.projectKey && j.issueTypeId && !fields && j.token) {
+      setLoadingFields(true);
+      sendRuntime<FieldSchema[]>({ type: 'tl:jira-fields', projectKey: j.projectKey, issueTypeId: j.issueTypeId })
+        .then(setFields)
+        .catch(() => undefined)
+        .finally(() => setLoadingFields(false));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const connect = async () => {
     try {
@@ -149,6 +165,7 @@ function JiraSection({ s, update, persist, setMsg }: SectionProps) {
       const me = await sendRuntime<{ displayName?: string }>({ type: 'tl:jira-test' });
       setWho(me.displayName);
       setProjects(await sendRuntime<ProjectRef[]>({ type: 'tl:jira-projects' }));
+      if (j.projectKey) setTypes(await sendRuntime<IssueTypeRef[]>({ type: 'tl:jira-issue-types', projectKey: j.projectKey }));
       setMsg?.({ kind: 'ok', text: `Connected as ${me.displayName}` });
     } catch (e) {
       setMsg?.({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
@@ -156,26 +173,65 @@ function JiraSection({ s, update, persist, setMsg }: SectionProps) {
       setTesting(false);
     }
   };
+
   const loadTypes = async (projectKey: string) => {
     setJ({ projectKey, issueTypeId: '', issueTypeName: undefined });
-    setTypes(await sendRuntime<IssueTypeRef[]>({ type: 'tl:jira-issue-types', projectKey }));
+    setFields(undefined);
+    setTypes(undefined);
+    if (!projectKey) return;
+    const t = await sendRuntime<IssueTypeRef[]>({ type: 'tl:jira-issue-types', projectKey });
+    setTypes(t);
+    // auto-pick "Bug" when it exists
+    const bug = t.find((x) => !x.subtask && /^bug$/i.test(x.name));
+    if (bug) await loadFields(bug.id, projectKey, t);
   };
-  const loadFields = async (issueTypeId: string) => {
-    const t = types?.find((x) => x.id === issueTypeId);
-    const next = { ...j, issueTypeId, issueTypeName: t?.name, mapping: { ...j.mapping, projectKey: j.projectKey, issueTypeId } };
-    update({ jira: next });
-    setFields(await sendRuntime<FieldSchema[]>({ type: 'tl:jira-fields', projectKey: j.projectKey, issueTypeId }));
+
+  const loadFields = async (issueTypeId: string, projectKey = j.projectKey, typeList = types) => {
+    const t = typeList?.find((x) => x.id === issueTypeId);
+    setLoadingFields(true);
+    try {
+      const f = await sendRuntime<FieldSchema[]>({ type: 'tl:jira-fields', projectKey, issueTypeId });
+      setFields(f);
+      // Build defaults for required fields the tester has not chosen yet.
+      const next = { ...values };
+      for (const field of requiredFields(f)) {
+        if (next[field.key]) continue;
+        const d = defaultFor(field);
+        if (d !== undefined) next[field.key] = d;
+      }
+      setValues(next);
+      const mappingFields = buildMappingFields(next, f);
+      setMappingText(JSON.stringify(mappingFields, null, 2));
+      const nextJira = { ...j, projectKey, issueTypeId, issueTypeName: t?.name, mapping: { ...j.mapping, projectKey, issueTypeId, fields: mappingFields } };
+      // persist immediately so the side panel is ready without an extra Save click
+      await persist({ ...s, jira: nextJira });
+      setMsg?.({ kind: 'ok', text: `Mapping generated for ${projectKey} / ${t?.name ?? 'issue type'}${requiredFields(f).length ? ' — review the required fields below' : ''}` });
+    } catch (e) {
+      setMsg?.({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setLoadingFields(false);
+    }
   };
+
+  const setValue = (key: string, v: string) => {
+    const next = { ...values, [key]: v };
+    setValues(next);
+    if (fields) setMappingText(JSON.stringify(buildMappingFields(next, fields), null, 2));
+  };
+
   const saveJira = async () => {
     let parsed: Record<string, unknown>;
     try {
-      parsed = JSON.parse(mappingText) as Record<string, unknown>;
+      parsed = advanced ? (JSON.parse(mappingText) as Record<string, unknown>) : buildMappingFields(values, fields ?? []);
     } catch {
       return setMsg?.({ kind: 'err', text: 'Field mapping is not valid JSON' });
     }
     await persist({ ...s, jira: { ...j, mapping: { ...j.mapping, projectKey: j.projectKey, issueTypeId: j.issueTypeId, fields: parsed } } });
   };
-  const required = fields?.filter((f) => f.required && !f.hasDefault && !['project', 'issuetype', 'summary', 'description', 'reporter'].includes(f.key)) ?? [];
+
+  const required = fields ? requiredFields(fields) : [];
+  const optionalWithValues = fields ? fields.filter((f) => !f.required && f.allowedValues?.length && !['issuetype', 'project', 'parent'].includes(f.key)) : [];
+  const missing = required.filter((f) => !values[f.key]);
 
   return (
     <div className="card">
@@ -229,37 +285,125 @@ function JiraSection({ s, update, persist, setMsg }: SectionProps) {
         </div>
       )}
 
+      {loadingFields && <p className="muted"><span className="spinner" /> Loading fields…</p>}
+
       {fields && (
-        <div style={{ marginTop: 8 }}>
-          {required.length > 0 ? (
-            <p className="warn">This issue type has required fields without defaults: {required.map((f) => `${f.name} (${f.key})`).join(', ')}. Map them below or issue creation will fail.</p>
+        <div style={{ marginTop: 10 }}>
+          {required.length ? (
+            <>
+              <h3 style={{ marginBottom: 2 }}>Required by this project</h3>
+              <p className="muted" style={{ marginTop: 0 }}>Defaults were chosen for you. Change any of them; they are used for every bug and can be edited in Jira afterwards.</p>
+              <div className="row" style={{ gap: 12, alignItems: 'flex-end' }}>
+                {required.map((f) => (
+                  <FieldControl key={f.key} field={f} value={values[f.key] ?? ''} onChange={(v) => setValue(f.key, v)} />
+                ))}
+              </div>
+            </>
           ) : (
             <p className="ok">No extra required fields. Summary and description are enough.</p>
           )}
-          <details>
-            <summary className="muted">All create-screen fields ({fields.length})</summary>
-            <table>
-              <tbody>
-                {fields.map((f) => (
-                  <tr key={f.key}>
-                    <td className="mono">{f.key}</td>
-                    <td>{f.name}{f.required ? ' *' : ''}</td>
-                    <td className="muted">{f.type}{f.itemsType ? `<${f.itemsType}>` : ''}</td>
-                    <td className="muted">{f.allowedValues?.slice(0, 6).map((v) => v.name).join(', ')}{(f.allowedValues?.length ?? 0) > 6 ? '…' : ''}</td>
-                  </tr>
+
+          {optionalWithValues.length > 0 && (
+            <details style={{ marginTop: 8 }}>
+              <summary className="muted">Optional defaults ({optionalWithValues.length} fields such as {optionalWithValues.slice(0, 3).map((f) => f.name).join(', ')})</summary>
+              <div className="row" style={{ gap: 12, alignItems: 'flex-end' }}>
+                {optionalWithValues.map((f) => (
+                  <FieldControl key={f.key} field={f} value={values[f.key] ?? ''} onChange={(v) => setValue(f.key, v)} allowEmpty />
                 ))}
-              </tbody>
-            </table>
+              </div>
+            </details>
+          )}
+
+          <details style={{ marginTop: 8 }} open={advanced} onToggle={(e) => setAdvanced((e.target as HTMLDetailsElement).open)}>
+            <summary className="muted">Advanced: raw field mapping (JSON)</summary>
+            <p className="muted">Values: "$labels", "$summary", "$description", or templates like {'{{draft.environmentSummary}}'}. Editing here overrides the form above when you save.</p>
+            <textarea className="mono" value={mappingText} onChange={(e) => setMappingText(e.target.value)} style={{ minHeight: 120 }} />
           </details>
+
+          <div className="row" style={{ marginTop: 10 }}>
+            <button className="primary" onClick={saveJira} disabled={!j.projectKey || !j.issueTypeId || missing.length > 0}>Save Jira settings</button>
+            {missing.length > 0 && <span className="warn">Choose a value for: {missing.map((f) => f.name).join(', ')}</span>}
+          </div>
         </div>
       )}
-
-      <label>Field mapping (JSON). Values: "$labels", "$summary", "$description", or templates like "{'{{'}draft.environmentSummary{'}}'}". Option fields accept a name or id.</label>
-      <textarea className="mono" value={mappingText} onChange={(e) => setMappingText(e.target.value)} style={{ minHeight: 120 }} />
-      <p className="muted">Example: {'{ "labels": ["$labels", "regression"], "priority": "High", "components": "Checkout", "customfield_10042": "{{draft.environmentSummary}}" }'}</p>
-      <button className="primary" onClick={saveJira} disabled={!j.projectKey || !j.issueTypeId}>Save Jira settings</button>
     </div>
   );
+}
+
+function FieldControl({ field, value, onChange, allowEmpty }: { field: FieldSchema; value: string; onChange: (v: string) => void; allowEmpty?: boolean }) {
+  const multi = field.type === 'array';
+  if (field.allowedValues?.length) {
+    const selected = value ? value.split(',').map((x) => x.trim()).filter(Boolean) : [];
+    if (multi) {
+      return (
+        <div style={{ minWidth: 220 }}>
+          <label>{field.name}{field.required ? ' *' : ''} <span className="badge">multi</span></label>
+          <select
+            multiple
+            size={Math.min(5, field.allowedValues.length)}
+            value={selected}
+            onChange={(e) => onChange(Array.from(e.target.selectedOptions).map((o) => o.value).join(', '))}
+          >
+            {field.allowedValues.map((v) => <option key={v.id} value={v.name}>{v.name}</option>)}
+          </select>
+        </div>
+      );
+    }
+    return (
+      <div style={{ minWidth: 220 }}>
+        <label>{field.name}{field.required ? ' *' : ''}</label>
+        <select value={value} onChange={(e) => onChange(e.target.value)}>
+          {allowEmpty && <option value="">— none —</option>}
+          {field.allowedValues.map((v) => <option key={v.id} value={v.name}>{v.name}</option>)}
+        </select>
+      </div>
+    );
+  }
+  return (
+    <div style={{ minWidth: 220 }}>
+      <label>{field.name}{field.required ? ' *' : ''} <span className="badge">{field.type}</span></label>
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={field.type === 'date' ? 'YYYY-MM-DD' : ''} />
+    </div>
+  );
+}
+
+const STANDARD_FIELDS = ['project', 'issuetype', 'summary', 'description', 'reporter', 'labels'];
+
+function requiredFields(fields: FieldSchema[]) {
+  return fields.filter((f) => f.required && !f.hasDefault && !STANDARD_FIELDS.includes(f.key));
+}
+
+/** Pick a sensible default: newest version, otherwise the first allowed value; free-text fields stay empty. */
+function defaultFor(field: FieldSchema): string | undefined {
+  const vals = field.allowedValues;
+  if (!vals?.length) return undefined;
+  if (field.itemsType === 'version' || field.type === 'version') {
+    const sorted = [...vals].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    return sorted[sorted.length - 1]!.name;
+  }
+  return vals[0]!.name;
+}
+
+function stringValues(fields: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(fields)) {
+    if (k === 'labels') continue;
+    if (typeof v === 'string') out[k] = v;
+    else if (Array.isArray(v)) out[k] = v.filter((x) => typeof x === 'string').join(', ');
+    else if (v && typeof v === 'object' && 'name' in v) out[k] = String((v as { name: unknown }).name);
+  }
+  return out;
+}
+
+function buildMappingFields(values: Record<string, string>, fields: FieldSchema[]): Record<string, unknown> {
+  const out: Record<string, unknown> = { labels: ['$labels'] };
+  const known = new Set(fields.map((f) => f.key));
+  for (const [k, v] of Object.entries(values)) {
+    if (!v.trim()) continue;
+    if (fields.length && !known.has(k)) continue;
+    out[k] = v.trim();
+  }
+  return out;
 }
 
 function PrivacySection({ s, update, persist }: SectionProps) {
