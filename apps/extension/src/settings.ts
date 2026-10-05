@@ -46,6 +46,10 @@ export interface Settings {
   traceLinkTemplates: Record<string, string>;
   telemetryHostsExtra: string[];
   retentionDays: number;
+  /** Start tab video automatically when the popup is opened on a monitored tab (Chrome needs that invocation). */
+  autoRecordOnOpen: boolean;
+  /** Which artifact kinds are pre-ticked for attachment; the tester can still change each one before Create. */
+  attachDefaults: Record<string, boolean>;
   tracker?: TrackerSettings;
   /** @deprecated legacy field kept only so old stored settings can be migrated. */
   jira?: JiraSettings;
@@ -67,7 +71,20 @@ export const DEFAULT_SETTINGS: Settings = {
   traceLinkTemplates: {},
   telemetryHostsExtra: [],
   retentionDays: 7,
+  autoRecordOnOpen: true,
+  attachDefaults: { screenshot: true, video: true, rrweb: true, 'console-log': true, 'network-log': true, 'har-focused': true, har: false, 'incident-viewer': true },
   onboarded: false,
+};
+
+export const ARTIFACT_KIND_LABELS: Record<string, string> = {
+  screenshot: 'Screenshot',
+  video: 'Tab video segments',
+  rrweb: 'DOM replay',
+  'console-log': 'Console log',
+  'network-log': 'Network log (full request/response detail)',
+  'har-focused': 'HAR of selected requests',
+  har: 'HAR of all requests',
+  'incident-viewer': 'HTML incident viewer',
 };
 
 const KEY = 'tl.settings';
@@ -93,7 +110,7 @@ export async function loadSettings(): Promise<Settings> {
   }
   if (!stored) stored = (await chrome.storage.local.get(KEY))[KEY] as Partial<Settings> | undefined;
   const secrets = ((await chrome.storage.local.get(SECRETS_KEY))[SECRETS_KEY] ?? {}) as { jiraToken?: string; trackerToken?: string };
-  const s: Settings = { ...DEFAULT_SETTINGS, ...(stored ?? {}), redaction: { ...DEFAULT_SETTINGS.redaction, ...(stored?.redaction ?? {}) } };
+  const s: Settings = { ...DEFAULT_SETTINGS, ...(stored ?? {}), redaction: { ...DEFAULT_SETTINGS.redaction, ...(stored?.redaction ?? {}) }, attachDefaults: { ...DEFAULT_SETTINGS.attachDefaults, ...(stored?.attachDefaults ?? {}) } };
   // Migrate the pre-multi-tracker `jira` block into `tracker`.
   if (!s.tracker && s.jira) s.tracker = { trackerId: 'jira-cloud', ...s.jira };
   delete s.jira;

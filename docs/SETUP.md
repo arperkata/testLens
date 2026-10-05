@@ -215,7 +215,8 @@ traceparent  = https://tempo.example.com/trace/{value}
 
 ## 5. Daily use
 
-1. Test normally in a monitored tab. The popup shows the live buffer: requests, console lines, errors, actions and whether replay is recording. If you want pixel video as well, click **Record this tab** in the popup once; Chrome requires that click per tab. Recording continues in the background until the tab closes or you click **Stop video**.
+1. Test normally in a monitored tab. The popup shows the live buffer: requests, console lines, errors, actions and whether replay is recording. Opening the popup on a monitored tab also starts the rolling **tab video** automatically (Chrome requires TestLens to have been opened on the tab once; the setting *Start tab video automatically* controls this). Recording continues in the background until the tab closes or you click **Stop video**. Everything is captured; what gets attached is decided at creation time.
+   To change a monitored entry later, use **edit** next to it in Settings → Monitored sites, for example to widen `https://host:port` to the whole domain, then **Apply monitoring**.
 2. When something goes wrong, click the TestLens icon. Optionally type what you saw in **What went wrong?**. Click **Report Issue**.
 3. The side panel opens on that tab only. It shows "Evidence preserved" while the post-click window runs, then the composed bug.
 4. **Bug tab**: check the focal event (change it from the candidate list if TestLens picked the wrong one), edit summary, steps, expected and actual, labels. Click **Save edits**.

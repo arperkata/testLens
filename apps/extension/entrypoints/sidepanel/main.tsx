@@ -196,7 +196,7 @@ function IncidentView({ incident, onBack, reload, setIncident }: { incident: Inc
 
       {tab === 'bug' && <BugTab ctx={ctx} draft={draft} incident={incident} onPatch={patch} onRerun={(f) => run('rerun', async () => setIncident(await sendRuntime<Incident>({ type: 'tl:rerun-engine', incidentId: incident.incidentId, focal: f })))} />}
       {tab === 'evidence' && <EvidenceTab ctx={ctx} incident={incident} onPatch={patch} />}
-      {tab === 'jira' && <TrackerTab incident={incident} setIncident={setIncident} />}
+      {tab === 'jira' && <TrackerTab incident={incident} setIncident={setIncident} onPatch={patch} />}
 
       {(busy || msg) && (
         <div className="toast">
@@ -510,7 +510,7 @@ function pretty(s: string) {
 
 // ---------------------------------------------------------------------------
 
-function TrackerTab({ incident, setIncident }: { incident: Incident; setIncident: (i: Incident) => void }) {
+function TrackerTab({ incident, setIncident, onPatch }: { incident: Incident; setIncident: (i: Incident) => void; onPatch: (p: import('../../src/messages').IncidentPatch) => void }) {
   const [configured, setConfigured] = useState<boolean>();
   const [preview, setPreview] = useState<TrackerPreview>();
   const [similar, setSimilar] = useState<{ key: string; summary: string; url: string; status: string }[]>();
@@ -776,13 +776,15 @@ function TrackerTab({ incident, setIncident }: { incident: Incident; setIncident
             </div>
           </div>
 
-          <h2>Attachments</h2>
+          <h2>Attachments — tick what goes into the bug</h2>
           {d?.attachments === 'none' && <p className="warn">{d.displayName} does not accept attachments through its API. Files stay downloadable on the Evidence tab; the description notes this.</p>}
           <table>
             <tbody>
               {preview.attachments.map((a) => (
                 <tr key={a.id} className={a.include ? '' : 'muted'}>
-                  <td>{a.include ? '✓' : '–'}</td>
+                  <td style={{ width: 28 }}>
+                    <input type="checkbox" checked={a.include} disabled={created} onChange={(e) => onPatch({ artifactIncludes: { [a.id]: e.target.checked } })} />
+                  </td>
                   <td>{a.fileName}</td>
                   <td>{fmtBytes(a.bytes)}</td>
                   <td className="err">{a.include && a.tooLarge && d?.attachments !== 'none' ? `exceeds ${fmtBytes(preview.limits.maxAttachmentBytes)} limit — will be skipped` : ''}</td>
@@ -790,6 +792,9 @@ function TrackerTab({ incident, setIncident }: { incident: Incident; setIncident
               ))}
             </tbody>
           </table>
+          <p className="muted" style={{ marginTop: 4 }}>
+            Selected: {preview.attachments.filter((a) => a.include).length} of {preview.attachments.length} ({fmtBytes(preview.attachments.filter((a) => a.include).reduce((n, a) => n + a.bytes, 0))}). Defaults come from Settings → Capture → Default attachments.
+          </p>
 
           <label className="inline" style={{ marginTop: 8 }}>
             <input type="checkbox" checked={showPayload} onChange={(e) => setShowPayload(e.target.checked)} /> show raw API payload

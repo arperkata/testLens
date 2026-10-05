@@ -12,13 +12,31 @@ function Popup() {
   const [error, setError] = useState<string>();
   const [jiraReady, setJiraReady] = useState(false);
 
+  const [autoStarted, setAutoStarted] = useState(false);
+
   useEffect(() => {
     void (async () => {
       const [t] = await chrome.tabs.query({ active: true, currentWindow: true });
       setTab(t);
-      if (t?.id !== undefined) setStatus(await sendRuntime<TabStatus>({ type: 'tl:get-tab-status', tabId: t.id }));
       const s = await loadSettings();
       setJiraReady(Boolean(s.tracker?.token && s.tracker.projectKey));
+      if (t?.id === undefined) return;
+      let st = await sendRuntime<TabStatus>({ type: 'tl:get-tab-status', tabId: t.id });
+      // Opening the popup is the user invocation Chrome requires for tab capture: start video
+      // automatically on monitored tabs so the tester never has to think about it.
+      if (s.autoRecordOnOpen && st.monitored && st.recordingSupported && !st.recording) {
+        try {
+          const streamId = await new Promise<string>((resolve, reject) =>
+            chrome.tabCapture.getMediaStreamId({ targetTabId: t.id! }, (id) => (chrome.runtime.lastError || !id ? reject(new Error(chrome.runtime.lastError?.message ?? 'No stream id')) : resolve(id))),
+          );
+          await sendRuntime({ type: 'tl:start-tab-recording', tabId: t.id, streamId });
+          st = await sendRuntime<TabStatus>({ type: 'tl:get-tab-status', tabId: t.id });
+          setAutoStarted(true);
+        } catch (e) {
+          console.warn('[TL] auto video start failed', e);
+        }
+      }
+      setStatus(st);
     })().catch((e) => setError(String(e)));
   }, []);
 
@@ -142,7 +160,9 @@ function Popup() {
             {status.recordingSupported && (
               <div className="row between" style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--line)' }}>
                 <span className={status.recording ? 'err' : 'muted'}>
-                  {status.recording ? `● Video recording this tab${status.recordingSince ? ` since ${new Date(status.recordingSince).toLocaleTimeString()}` : ''}` : 'Video: off (DOM replay + screenshot still captured)'}
+                  {status.recording
+                    ? `● Video recording this tab${autoStarted ? ' (started now)' : status.recordingSince ? ` since ${new Date(status.recordingSince).toLocaleTimeString()}` : ''}`
+                    : 'Video: off (DOM replay + screenshot still captured)'}
                 </span>
                 <button className="small" onClick={toggleRecording} disabled={busy} title="Chrome needs one click per tab to allow video capture. Recording stays on until the tab closes.">
                   {status.recording ? 'Stop video' : 'Record this tab'}

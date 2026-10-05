@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import '../../src/ui/base.css';
 import type { FieldSchema, IssueTypeRef, ProjectRef, TrackerDescriptor } from '@testlens/trackers-core';
 import { sendRuntime } from '../../src/messages';
-import { DEFAULT_SETTINGS, describeEntry, exportSettings, importSettings, loadSettings, normalizeOriginInput, originsToMatchPatterns, saveSettings, type Settings, type TrackerSettings } from '../../src/settings';
+import { ARTIFACT_KIND_LABELS, DEFAULT_SETTINGS, describeEntry, exportSettings, importSettings, loadSettings, normalizeOriginInput, originsToMatchPatterns, saveSettings, type Settings, type TrackerSettings } from '../../src/settings';
 import { buildMappingFields, optionalFieldsWithValues, requiredFields, stringValues, withDefaults } from '../../src/jira-mapping';
 import { FieldControl } from '../../src/ui/FieldControl';
 
@@ -51,7 +51,24 @@ function MonitoringSection({ s, update, persist, setMsg }: SectionProps) {
   const [input, setInput] = useState('');
   const [granted, setGranted] = useState<string[]>([]);
   const [incognitoAllowed, setIncognitoAllowed] = useState<boolean>();
+  const [editing, setEditing] = useState<{ from: string; value: string }>();
   const fileRef = useRef<HTMLInputElement>(null);
+
+  /** Replace an entry in place, carrying its app name over, then ask for the new permission on Apply. */
+  const commitEdit = () => {
+    if (!editing) return;
+    const next = normalizeOriginInput(editing.value);
+    if (!next) return setMsg?.({ kind: 'err', text: 'Enter a site like app.example.com, https://host:port or *.example.com' });
+    const origins = s.monitoredOrigins.map((x) => (x === editing.from ? next : x)).filter((x, i, arr) => arr.indexOf(x) === i);
+    const appNames = { ...s.appNames };
+    if (appNames[editing.from] !== undefined && next !== editing.from) {
+      appNames[next] = appNames[editing.from]!;
+      delete appNames[editing.from];
+    }
+    update({ monitoredOrigins: origins, appNames });
+    setEditing(undefined);
+    if (next !== editing.from) setMsg?.({ kind: 'ok', text: `Changed to ${describeEntry(next)}. Click Apply monitoring to grant the permission.` });
+  };
   useEffect(() => {
     void chrome.permissions.getAll().then((p) => setGranted(p.origins ?? []));
     chrome.extension.isAllowedIncognitoAccess((ok) => setIncognitoAllowed(ok));
@@ -106,18 +123,39 @@ function MonitoringSection({ s, update, persist, setMsg }: SectionProps) {
         <button onClick={add}>Add</button>
       </div>
       <div className="list" style={{ marginTop: 8 }}>
-        {s.monitoredOrigins.map((o) => (
-          <div key={o} className="item">
-            <div className="body">
-              <div className="mono">
-                {o.replace(/^\*\./, '')} {isGranted(o) ? <span className="badge ok">permission granted</span> : <span className="badge err">permission pending — click Apply</span>}
+        {s.monitoredOrigins.map((o) =>
+          editing?.from === o ? (
+            <div key={o} className="item">
+              <div className="body">
+                <input
+                  autoFocus
+                  value={editing.value}
+                  onChange={(e) => setEditing({ from: o, value: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitEdit();
+                    if (e.key === 'Escape') setEditing(undefined);
+                  }}
+                  placeholder="app.example.com, https://host:port or *.example.com"
+                />
+                <div className="reasons">Will become: {normalizeOriginInput(editing.value) ? describeEntry(normalizeOriginInput(editing.value)!) : 'invalid entry'}</div>
               </div>
-              <div className="reasons">{describeEntry(o)}</div>
+              <button className="small primary" onClick={commitEdit} disabled={!normalizeOriginInput(editing.value)}>Save</button>
+              <button className="small" onClick={() => setEditing(undefined)}>Cancel</button>
             </div>
-            <input placeholder="app name (optional)" style={{ width: 180 }} value={s.appNames[o] ?? ''} onChange={(e) => update({ appNames: { ...s.appNames, [o]: e.target.value } })} />
-            <button className="small danger" onClick={() => update({ monitoredOrigins: s.monitoredOrigins.filter((x) => x !== o) })}>remove</button>
-          </div>
-        ))}
+          ) : (
+            <div key={o} className="item">
+              <div className="body">
+                <div className="mono">
+                  {o.replace(/^\*\./, '')} {isGranted(o) ? <span className="badge ok">permission granted</span> : <span className="badge err">permission pending — click Apply</span>}
+                </div>
+                <div className="reasons">{describeEntry(o)}</div>
+              </div>
+              <input placeholder="app name (optional)" style={{ width: 180 }} value={s.appNames[o] ?? ''} onChange={(e) => update({ appNames: { ...s.appNames, [o]: e.target.value } })} />
+              <button className="small" title="Change this entry, e.g. widen it to the whole domain" onClick={() => setEditing({ from: o, value: o })}>edit</button>
+              <button className="small danger" onClick={() => update({ monitoredOrigins: s.monitoredOrigins.filter((x) => x !== o) })}>remove</button>
+            </div>
+          ),
+        )}
         {!s.monitoredOrigins.length && <p className="muted">No sites yet.</p>}
       </div>
       <label>Environment name (added to every bug, e.g. QA, Staging)</label>
@@ -175,9 +213,20 @@ function CaptureSection({ s, update, persist }: SectionProps) {
         <label className="inline"><input type="checkbox" checked={s.maskAllInputs} onChange={(e) => update({ maskAllInputs: e.target.checked })} /> Mask all input values in replay</label>
       </div>
       <p className="muted">
-        <b>Tab video</b>: Chrome only allows video capture after a click on the TestLens icon, so use <b>Record this tab</b> in the popup once per tab you test. Recording then runs in the background in rolling 60-second segments until the tab closes; the segments covering the incident window are attached as <code>recording-NN.webm</code>. DOM replay and the screenshot are always captured regardless.
+        <b>Tab video</b>: Chrome only allows video capture after TestLens has been opened on the tab. With the option below, opening the popup on a monitored tab starts the rolling recording automatically (60-second segments, kept for ~7 minutes, until the tab closes). DOM replay and the screenshot are always captured regardless.
       </p>
-      <button onClick={() => persist()}>Save</button>
+      <label className="inline"><input type="checkbox" checked={s.autoRecordOnOpen} onChange={(e) => update({ autoRecordOnOpen: e.target.checked })} /> Start tab video automatically when I open TestLens on a monitored tab</label>
+
+      <h3>Default attachments</h3>
+      <p className="muted" style={{ marginTop: 0 }}>Everything is always captured. These are only the files pre-ticked for the bug; you can change each one on the Evidence and Tracker tabs before Create.</p>
+      <div className="row" style={{ gap: 4 }}>
+        {Object.entries(ARTIFACT_KIND_LABELS).map(([kind, label]) => (
+          <label key={kind} className="inline">
+            <input type="checkbox" checked={s.attachDefaults[kind] ?? true} onChange={(e) => update({ attachDefaults: { ...s.attachDefaults, [kind]: e.target.checked } })} /> {label}
+          </label>
+        ))}
+      </div>
+      <button onClick={() => persist()} style={{ marginTop: 8 }}>Save</button>
     </div>
   );
 }

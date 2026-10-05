@@ -85,7 +85,8 @@ export async function finalizeIncident(incidentId: string): Promise<StoredIncide
 
     const artifacts: Artifact[] = [];
     const shot = await getBlob(`${incidentId}:screenshot`);
-    if (shot) artifacts.push(artifact(`${incidentId}:screenshot`, 'screenshot', 'screenshot.png', 'image/png', shot.size, 'not-applicable'));
+    const def = (kind: string) => settings.attachDefaults[kind] ?? true;
+    if (shot) artifacts.push(artifact(`${incidentId}:screenshot`, 'screenshot', 'screenshot.png', 'image/png', shot.size, 'not-applicable', undefined, def('screenshot')));
 
     // video segments overlapping the window become one artifact each (segments are independently playable)
     const segments = await readVideoSegments(inc.tabId, start, end);
@@ -94,12 +95,12 @@ export async function finalizeIncident(incidentId: string): Promise<StoredIncide
       const id = `${incidentId}:video:${i + 1}`;
       await putBlob(id, incidentId, seg.blob);
       const name = `recording-${String(i + 1).padStart(2, '0')}_${hhmmss(seg.start)}-${hhmmss(seg.end)}.webm`;
-      artifacts.push(artifact(id, 'video', name, seg.mime || 'video/webm', seg.blob.size, 'unredacted', { start: seg.start, end: seg.end }));
+      artifacts.push(artifact(id, 'video', name, seg.mime || 'video/webm', seg.blob.size, 'unredacted', { start: seg.start, end: seg.end }, def('video')));
     }
     if (rr.length) {
       const rrBlob = new Blob([JSON.stringify(rr)], { type: 'application/json' });
       await putBlob(`${incidentId}:rrweb`, incidentId, rrBlob);
-      artifacts.push(artifact(`${incidentId}:rrweb`, 'rrweb', 'replay.rrweb.json', 'application/json', rrBlob.size, settings.maskAllInputs ? 'redacted' : 'unredacted', { start, end }));
+      artifacts.push(artifact(`${incidentId}:rrweb`, 'rrweb', 'replay.rrweb.json', 'application/json', rrBlob.size, settings.maskAllInputs ? 'redacted' : 'unredacted', { start, end }, def('rrweb')));
     }
 
     const raw: RawBrowserIncident = {
@@ -217,18 +218,20 @@ async function writeTextArtifacts(inc: StoredIncident & { context: BugContext; d
   const ctx = inc.context;
   const id = inc.incidentId;
   const includes = Object.fromEntries(ctx.artifacts.map((a) => [a.kind, a.include]));
+  const defaults = (await loadSettings()).attachDefaults;
   const keep = ctx.artifacts.filter((a) => a.kind === 'screenshot' || a.kind === 'rrweb' || a.kind === 'video');
   const text: Artifact[] = [];
-  const add = async (kind: Artifact['kind'], fileName: string, mime: string, content: string, defaultInclude = true) => {
+  const add = async (kind: Artifact['kind'], fileName: string, mime: string, content: string) => {
     const blob = new Blob([content], { type: mime });
     const aid = `${id}:${kind}`;
     await putBlob(aid, id, blob);
-    text.push({ ...artifact(aid, kind, fileName, mime, blob.size, 'redacted'), include: includes[kind] ?? defaultInclude });
+    // keep the tester's earlier choice if the artifact already existed; otherwise apply the configured default
+    text.push({ ...artifact(aid, kind, fileName, mime, blob.size, 'redacted'), include: includes[kind] ?? defaults[kind] ?? true });
   };
   await add('console-log', 'console.log', 'text/plain', buildConsoleLog(ctx));
   await add('network-log', 'network.log', 'text/plain', buildNetworkLog(ctx));
   await add('har-focused', 'network-focused.har', 'application/json', buildHar(ctx, selectedExchangeIds(ctx)));
-  await add('har', 'network-full.har', 'application/json', buildHar(ctx), false);
+  await add('har', 'network-full.har', 'application/json', buildHar(ctx));
 
   // viewer: embed screenshot + rrweb
   const shot = await getBlob(`${id}:screenshot`);
@@ -253,8 +256,8 @@ export async function artifactBlobs(inc: StoredIncident, onlyIncluded = true): P
   return out;
 }
 
-function artifact(id: string, kind: Artifact['kind'], fileName: string, mime: string, bytes: number, status: Artifact['redaction']['status'], timeRange?: { start: number; end: number }): Artifact {
-  return { id, kind, fileName, mime, bytes, storage: { type: 'indexeddb', ref: id }, redaction: { status, rulesApplied: status === 'redacted' ? ['default'] : [] }, include: true, timeRange };
+function artifact(id: string, kind: Artifact['kind'], fileName: string, mime: string, bytes: number, status: Artifact['redaction']['status'], timeRange?: { start: number; end: number }, include = true): Artifact {
+  return { id, kind, fileName, mime, bytes, storage: { type: 'indexeddb', ref: id }, redaction: { status, rulesApplied: status === 'redacted' ? ['default'] : [] }, include, timeRange };
 }
 
 function appNameFor(url: string, s: Settings) {
