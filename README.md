@@ -11,15 +11,23 @@ Open source (MIT). Works with the tester's own Jira Cloud account via an API tok
 ## Repository layout
 
 ```
-apps/extension               Chrome/Edge extension (WXT, MV3, React)
-packages/schema              BugContext v1 model (Zod)
-packages/redaction           capture-time + export-time secret masking
-packages/evidence-engine     deterministic focal-event scoring, correlation, HAR/log writers
-packages/composer            BugDraft composition (no AI), cURL export, trace links
-packages/trackers-core       ITrackerAdapter contract + mapping config
-packages/trackers-jira-cloud Jira Cloud REST v3 adapter, ADF renderer
-packages/connectors-browser  raw extension capture → BugContext
-docs/architecture            architecture proposal
+apps/extension                 Chrome/Edge extension (WXT, MV3, React): capture, review, AI, trackers
+apps/hub                       local Hub: ingests Postman/Newman/HAR evidence for the extension to pull
+packages/schema                BugContext v1 model (Zod)
+packages/redaction             capture-time + export-time secret masking
+packages/evidence-engine       deterministic focal-event scoring, correlation, HAR/log writers
+packages/composer              BugDraft composition (no AI), cURL export, trace links
+packages/ai                    optional AI layer: on-device Chrome model, Groq, Gemini, OpenRouter, Ollama, OpenAI
+packages/trackers-core         ITrackerAdapter contract, mapping config, Markdown/HTML/wiki renderers
+packages/trackers-jira-cloud   Jira Cloud (REST v3, ADF)        packages/trackers-jira-dc   Jira Server/DC
+packages/trackers-azure-devops Azure DevOps Boards              packages/trackers-github    GitHub Issues
+packages/trackers-gitlab       GitLab Issues                     packages/trackers-linear    Linear
+packages/connectors-browser    raw extension capture → BugContext
+packages/connectors-postman    Postman snippet payload / Newman run JSON → BugContext
+packages/connectors-har        HAR 1.2 → BugContext
+integrations/postman           Postman snippet + newman-reporter-testlens
+e2e/                           Playwright end-to-end run with fixture app, mock Jira, mock OpenAI and a live Hub
+docs/                          setup guide, architecture proposal
 ```
 
 ## Build

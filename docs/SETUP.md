@@ -206,6 +206,30 @@ What is sent, always redacted first: the click/input/navigation trail with relat
 
 What comes back is a suggestion. The Bug tab shows it beside the captured facts; **Apply** per field or **Apply all** copies it into the draft, and applied fields are badged "AI" in the panel and in the issue description. The technical analysis goes into the description as a clearly marked "AI analysis" section with the model's confidence and caveats. Nothing AI-written reaches the tracker without those clicks.
 
+### 4.4b API testing tools: Postman, Newman, HAR
+
+API-testing tools have no browser to record, so TestLens gives them two entry points. Both feed the same pipeline as browser bugs: redaction, evidence engine, composer, AI suggestions, tracker preview and create, all in the side panel.
+
+**Local Hub (live push from Postman and Newman)**
+
+1. Start the Hub on the tester's machine:
+
+   ```bash
+   npx testlens-hub
+   ```
+
+   or from this repository `npm run hub`. It listens on `http://localhost:7331`, keeps its data under `~/.testlens/hub`, and shows the Postman snippet at that URL. It holds no tracker credentials.
+2. In TestLens settings → **5. API testing tools**, click **Connect & test** (grants the extension permission to call localhost) and keep **Pull new incidents automatically** on.
+3. **Postman**: open the collection → Scripts → Post-response (older versions: Tests), paste the snippet from the Hub page. It posts to the Hub only when the response is 4xx/5xx, a request error occurred, or a `pm.test` in that script failed. Set `pm.variables.set("TL_REPORT", "why")` before it runs to force a report for any request. The snippet logs "TestLens: incident sent" in the Postman console.
+4. **Newman (CLI/CI)**: install `integrations/postman/newman-reporter-testlens` and run `newman run collection.json -r cli,testlens --reporter-testlens-hub http://localhost:7331`. Failed executions are delivered after the run finishes. Alternatively export `-r json --reporter-json-export run.json` and import the file.
+5. New incidents appear in the side panel's **Incidents** list within a minute (or immediately via **Sync from Hub**), marked with the tool name. Review and create exactly as for a browser bug. Steps to reproduce are written as "open collection, run request, send METHOD URL, check assertion".
+
+**File import (no Hub)**
+
+In the side panel's Incidents list, **Import HAR / Newman file** accepts a HAR 1.2 export from any browser's DevTools, Charles, Fiddler, Proxyman or Insomnia, a Newman run JSON, or a TestLens Postman payload. The file becomes an incident with the failed request as focal event; the original file is kept as an unselected attachment.
+
+What is different for API-sourced incidents: no screenshot, replay or video exist, so capture quality is judged on request detail and assertions instead; the HTML viewer still shows the timeline, requests with bodies, and the assertion results.
+
 ### 4.5 Redaction rules
 
 Built-in rules always run and cannot be disabled. They mask header, query, form and JSON values whose key matches: authorization, proxy-authorization, cookie, set-cookie, x-api-key, x-auth-token, x-csrf-token, password, passwd, pwd, secret, client_secret, token, access_token, refresh_token, id_token, api_key, private_key, session, sessionid, otp, pin, ssn, cvv, card_number. Pattern rules catch JWTs, bearer tokens, AWS, OpenAI, GitHub and Slack key formats and card-number-like digit runs anywhere in text.

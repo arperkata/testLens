@@ -9,6 +9,7 @@ import { ingestPageExchange, installNetworkCapture } from '../src/capture/networ
 import { finalizeIncident, patchIncident, redactionTotals, rememberPageInfo, rerunEngine, startIncident } from '../src/incident';
 import * as tracker from '../src/tracker';
 import * as ai from '../src/ai';
+import * as hub from '../src/hub';
 import { isRecording, markEnded, recordingSince, recordingSupported, startRecording, startSyntheticRecording, stopRecording } from '../src/recording';
 import { expireVideo } from '../src/buffer/db';
 import type { OffscreenEvent } from '../src/messages';
@@ -201,6 +202,8 @@ export default defineBackground(() => {
       void expire(Date.now() - pre - 90_000);
       void expireVideo(Date.now() - pre - 150_000);
       void purgeIncidents(Date.now() - (s?.retentionDays ?? 7) * 86_400_000);
+      // pull new API-tool incidents from the local Hub (cheap when it is not running)
+      if (s?.hub.enabled && s.hub.autoSync) void hub.sync().catch(() => undefined);
     } else if (a.name.startsWith('tl-finalize:')) {
       void finalizeIncident(a.name.slice('tl-finalize:'.length));
     }
@@ -310,6 +313,14 @@ export default defineBackground(() => {
         return ai.projection(req.incidentId);
       case 'tl:ai-store':
         return ai.store(req.incidentId, req.analysis);
+      case 'tl:hub-status':
+        return hub.status();
+      case 'tl:hub-sync':
+        return hub.sync();
+      case 'tl:hub-test':
+        return hub.testConnection(req.url);
+      case 'tl:import-file':
+        return hub.importFile(req.name, req.text);
       case 'tl:ai-test':
         return ai.testConnection(req.ai);
       case 'tl:start-synthetic-recording':

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>TestLens Hub</title>
+<style>
+:root{--bg:#0f1115;--panel:#171a21;--line:#2a2f3a;--fg:#e6e8ee;--muted:#8b93a7;--acc:#4f8cff;--ok:#3ecf8e}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif}
+main{max-width:860px;margin:0 auto;padding:28px 20px}
+h1{font-size:22px;margin:0 0 6px}h2{font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:26px 0 8px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin:10px 0}
+pre{background:#0b0d12;border:1px solid var(--line);border-radius:6px;padding:12px;overflow:auto;font-size:12px;white-space:pre-wrap}
+code{font-family:ui-monospace,Consolas,monospace}.ok{color:var(--ok)}.muted{color:var(--muted)}
+ol li{margin:4px 0}button{background:var(--acc);color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer}
+</style>
+</head>
+<body>
+<main>
+  <h1>TestLens Hub <span class="ok">● running on port {{PORT}}</span></h1>
+  <p class="muted">Receives evidence from API-testing tools and turns it into reviewed bug reports. Nothing is created in your tracker from here: open the TestLens side panel in Chrome/Edge → <b>Incidents</b> → <b>Sync from Hub</b> to review and create.</p>
+
+  <h2>Postman — paste once into your collection</h2>
+  <div class="card">
+    <ol>
+      <li>In Postman, open the collection → <b>Scripts</b> → <b>Post-response</b> (older versions: <b>Tests</b>).</li>
+      <li>Paste the snippet below. It sends a request to this Hub only when the response is 4xx/5xx, a request error occurred, or a <code>pm.test</code> in the same script failed.</li>
+      <li>To force a report for a specific request, set <code>pm.variables.set("TL_REPORT", "reason")</code> before the snippet runs.</li>
+      <li>Run requests as usual. Failures appear in the TestLens side panel after <b>Sync from Hub</b>.</li>
+    </ol>
+    <button onclick="navigator.clipboard.writeText(document.getElementById('snip').textContent)">Copy snippet</button>
+    <pre id="snip">{{SNIPPET}}</pre>
+  </div>
+
+  <h2>Newman (CLI / CI)</h2>
+  <div class="card">
+    <p>Install the reporter from this repo (<code>integrations/postman/newman-reporter-testlens</code>) and run:</p>
+    <pre>newman run collection.json -e env.json -r cli,testlens --reporter-testlens-hub http://localhost:{{PORT}}</pre>
+    <p class="muted">Or export a run as JSON (<code>-r json --reporter-json-export run.json</code>) and import the file in the side panel or with the command below.</p>
+  </div>
+
+  <h2>Import a file (HAR, Newman run JSON, Postman payload)</h2>
+  <div class="card">
+    <pre>curl -X POST http://localhost:{{PORT}}/import -H "Content-Type: application/json" -H "X-TestLens-Filename: run.json" --data-binary @run.json</pre>
+    <p class="muted">HAR files from DevTools, Charles, Fiddler, Proxyman or Insomnia work too. The TestLens side panel can also import these files directly without the Hub.</p>
+  </div>
+
+  <h2>API</h2>
+  <div class="card">
+    <pre>GET  /health
+POST /ingest/postman
+POST /import
+GET  /incidents
+GET  /incidents/:id
+GET  /incidents/:id/artifacts/:artifactId
+DELETE /incidents/:id</pre>
+  </div>
+</main>
+</body>
+</html>

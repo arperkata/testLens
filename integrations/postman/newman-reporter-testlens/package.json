@@ -1,0 +1,15 @@
+{
+  "name": "newman-reporter-testlens",
+  "version": "0.1.0",
+  "description": "Newman reporter that sends failed executions to a local TestLens Hub for review and bug creation",
+  "main": "index.js",
+  "license": "MIT",
+  "files": ["index.js", "send.js"],
+  "keywords": ["newman", "reporter", "postman", "testlens", "bug", "jira"],
+  "peerDependencies": {
+    "newman": ">=5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

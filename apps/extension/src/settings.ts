@@ -74,6 +74,8 @@ export interface Settings {
   tracker?: TrackerSettings;
   /** Optional AI analysis. Off by default; the key is stored locally and never syncs. */
   ai: AiSettings;
+  /** Local TestLens Hub for API-testing tools (Postman, Newman, imports). */
+  hub: { enabled: boolean; url: string; autoSync: boolean };
   /** @deprecated legacy field kept only so old stored settings can be migrated. */
   jira?: JiraSettings;
   /** Set once the user has completed the first-run wizard. */
@@ -98,6 +100,7 @@ export const DEFAULT_SETTINGS: Settings = {
   stopVideoAfterReport: false,
   attachDefaults: { screenshot: true, video: true, rrweb: true, 'console-log': true, 'network-log': true, 'har-focused': true, har: false, 'incident-viewer': true },
   ai: DEFAULT_AI,
+  hub: { enabled: false, url: 'http://localhost:7331', autoSync: true },
   onboarded: false,
 };
 
@@ -141,6 +144,7 @@ export async function loadSettings(): Promise<Settings> {
     redaction: { ...DEFAULT_SETTINGS.redaction, ...(stored?.redaction ?? {}) },
     attachDefaults: { ...DEFAULT_SETTINGS.attachDefaults, ...(stored?.attachDefaults ?? {}) },
     ai: { ...DEFAULT_AI, ...(stored?.ai ?? {}) },
+    hub: { ...DEFAULT_SETTINGS.hub, ...(stored?.hub ?? {}) },
   };
   // Migrate the pre-multi-tracker `jira` block into `tracker`.
   if (!s.tracker && s.jira) s.tracker = { trackerId: 'jira-cloud', ...s.jira };

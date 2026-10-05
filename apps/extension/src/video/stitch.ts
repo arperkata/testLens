@@ -35,7 +35,10 @@ export async function stitchWebm(segments: StitchSegment[]): Promise<StitchResul
   let packets = 0;
   let dropped = 0;
   const base = sorted[0]!.start;
-  let timelineEnd = 0;
+  /** timestamp (s) of the last packet written; the output must be strictly increasing */
+  let lastTs = -1;
+  const FRAME = 0.1; // nominal frame spacing used for durations and the final end estimate
+  const EPS = 0.001;
 
   for (let i = 0; i < sorted.length; i++) {
     const seg = sorted[i]!;
@@ -47,7 +50,8 @@ export async function stitchWebm(segments: StitchSegment[]): Promise<StitchResul
       if (!source) {
         codec = track.codec;
         source = new EncodedVideoPacketSource(track.codec);
-        output.addVideoTrack(source, { frameRate: 10 });
+        // no frameRate hint: it makes the muxer quantise timestamps to the frame grid, which merges close frames
+        output.addVideoTrack(source);
         await output.start();
         started = true;
       } else if (track.codec !== codec) {
@@ -57,23 +61,29 @@ export async function stitchWebm(segments: StitchSegment[]): Promise<StitchResul
       const decoderConfig = (await track.getDecoderConfig()) ?? undefined;
       const meta = decoderConfig ? { decoderConfig } : undefined;
       const sink = new EncodedPacketSink(track);
-      const offsetSec = (seg.start - base) / 1000;
-      // where to stop this segment: the next segment's start, so overlaps are removed once
+      const first = await sink.getFirstPacket();
+      if (!first) continue;
+      // Place the segment on the shared timeline by its wall-clock start. If that would collide with
+      // what is already written (clock skew), shift the WHOLE segment forward: never reorder or drop
+      // frames inside a segment, because delta frames depend on their predecessors.
+      let offsetSec = (seg.start - base) / 1000;
+      const firstTs = first.timestamp + offsetSec;
+      if (firstTs <= lastTs) offsetSec += lastTs + EPS - firstTs;
+      // Cut this segment's tail where the next segment begins, so each moment is written once.
       const cutSec = next ? (next.start - base) / 1000 : Number.POSITIVE_INFINITY;
-      let packet = await sink.getFirstPacket();
-      let firstInSegment = true;
+      let packet: typeof first | null = first;
+      let isFirst = true;
       while (packet) {
         const ts = packet.timestamp + offsetSec;
-        if (ts >= cutSec && !firstInSegment) {
+        if (!isFirst && ts >= cutSec) {
           dropped++;
-        } else if (ts >= timelineEnd || firstInSegment) {
-          await source.add(packet.clone({ timestamp: Math.max(ts, timelineEnd) }), firstInSegment ? meta : undefined);
-          timelineEnd = Math.max(timelineEnd, ts + (packet.duration || 0.1));
-          packets++;
         } else {
-          dropped++;
+          const outTs = ts <= lastTs ? lastTs + EPS : ts;
+          await source.add(packet.clone({ timestamp: outTs, duration: Math.min(packet.duration || FRAME, 0.5) }), isFirst ? meta : undefined);
+          lastTs = outTs;
+          packets++;
         }
-        firstInSegment = false;
+        isFirst = false;
         packet = await sink.getNextPacket(packet);
       }
     } finally {
@@ -86,5 +96,5 @@ export async function stitchWebm(segments: StitchSegment[]): Promise<StitchResul
   await output.finalize();
   if (!target.buffer) throw new Error('muxer produced no output');
   const blob = new Blob([target.buffer], { type: 'video/webm' });
-  return { blob, start: base, end: Math.round(base + timelineEnd * 1000), packets, droppedOverlapPackets: dropped };
+  return { blob, start: base, end: Math.round(base + (lastTs + FRAME) * 1000), packets, droppedOverlapPackets: dropped };
 }

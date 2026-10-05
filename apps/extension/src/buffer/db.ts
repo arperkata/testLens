@@ -62,6 +62,10 @@ export interface StoredIncident {
   jira?: { key: string; url: string; attachments: { fileName: string; ok: boolean; error?: string }[] };
   /** Per-incident destination chosen in the side panel; falls back to settings when absent. */
   jiraTarget?: TrackerTarget;
+  /** Where the incident came from: browser capture (default), the local Hub, or a file import. */
+  origin?: 'browser' | 'hub' | 'import';
+  /** Id of the incident on the Hub, used to avoid importing it twice. */
+  hubIncidentId?: string;
   similar?: { key: string; summary: string; url: string; status: string }[];
 }
 

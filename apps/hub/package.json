@@ -1,0 +1,23 @@
+{
+  "name": "@testlens/hub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "TestLens Hub: local ingestion server for API-testing tools (Postman, Newman, HAR imports)",
+  "bin": {
+    "testlens-hub": "./bin/testlens-hub.mjs"
+  },
+  "scripts": {
+    "start": "node --import tsx ./src/server.ts",
+    "dev": "node --import tsx --watch ./src/server.ts"
+  },
+  "dependencies": {
+    "@testlens/schema": "*",
+    "@testlens/redaction": "*",
+    "@testlens/evidence-engine": "*",
+    "@testlens/composer": "*",
+    "@testlens/connectors-postman": "*",
+    "@testlens/connectors-har": "*",
+    "tsx": "^4.19.2"
+  }
+}

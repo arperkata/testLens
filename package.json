@@ -14,12 +14,15 @@
     "zip": "npm run zip -w @testlens/extension",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "e2e": "node e2e/run.mjs"
+    "e2e": "node e2e/run.mjs",
+    "hub": "npm run start -w @testlens/hub",
+    "typecheck:hub": "tsc -p apps/hub/tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.287",
     "sharp": "^0.35.5",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "@types/node": "^22.10.2"
   }
 }

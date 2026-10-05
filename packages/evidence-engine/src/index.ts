@@ -368,17 +368,27 @@ export function assessCaptureQuality(ctx: BugContext): { score: number; notes: s
     score -= 10;
   }
   const kinds = new Set(ctx.artifacts.map((a) => a.kind));
-  if (!kinds.has('screenshot')) {
-    notes.push('No screenshot captured.');
-    score -= 15;
+  const isBrowser = ctx.source.connectorId === 'browser';
+  if (isBrowser) {
+    if (!kinds.has('screenshot')) {
+      notes.push('No screenshot captured.');
+      score -= 15;
+    }
+    if (!kinds.has('rrweb') && !kinds.has('video')) {
+      notes.push('No visual recording (DOM replay or video) available.');
+      score -= 20;
+    } else if (!kinds.has('video')) {
+      notes.push('DOM replay available; no pixel video (enable "Record this tab" for video).');
+    }
+    if (ctx.console.length === 0 && ctx.errors.length === 0) notes.push('No console output or errors observed; the page may have loaded before TestLens was active.');
+  } else {
+    // API-tool / import sources have no screen to capture; judge them on request and assertion detail instead
+    if (ctx.assertions.length === 0) notes.push('No assertions were reported; failure detection relies on HTTP status only.');
+    if (!ctx.exchanges.some((e) => e.response?.body)) {
+      notes.push('No response bodies in the imported data.');
+      score -= 15;
+    }
   }
-  if (!kinds.has('rrweb') && !kinds.has('video')) {
-    notes.push('No visual recording (DOM replay or video) available.');
-    score -= 20;
-  } else if (!kinds.has('video')) {
-    notes.push('DOM replay available; no pixel video (enable "Record this tab" for video).');
-  }
-  if (ctx.console.length === 0 && ctx.errors.length === 0) notes.push('No console output or errors observed; the page may have loaded before TestLens was active.');
   return { score: Math.max(0, Math.min(100, score)), notes };
 }
 

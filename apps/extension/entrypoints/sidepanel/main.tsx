@@ -61,26 +61,11 @@ function App() {
 
   if (!activeId || !incident) {
     return (
-      <div style={{ padding: 12 }}>
-        <div className="row between">
-          <h1>Incidents</h1>
-          <button className="small" onClick={() => chrome.runtime.openOptionsPage()}>Settings</button>
-        </div>
-        {!incidents.length && <p className="muted">No incidents yet. Click the TestLens icon on a monitored tab and choose “Report Issue”.</p>}
-        <div className="list">
-          {incidents.map((i) => (
-            <div key={i.incidentId} className="item" style={{ cursor: 'pointer' }} onClick={() => setActiveId(i.incidentId)}>
-              <div className="body">
-                <div className="title">{i.draft?.summary ?? i.tab.title ?? i.tab.url}</div>
-                <div className="reasons">
-                  {new Date(i.triggerAt).toLocaleString()} · {i.status}
-                  {createdOf(i)?.key ? ` · ${createdOf(i)!.key}` : ''}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      <IncidentList
+        incidents={incidents}
+        onOpen={setActiveId}
+        onRefresh={refreshList}
+      />
     );
   }
 
@@ -96,6 +81,91 @@ function App() {
       reload={() => load(incident.incidentId)}
       setIncident={setIncident}
     />
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/** Incident list with the two API-testing entry points: pull from the local Hub, or import a file. */
+function IncidentList({ incidents, onOpen, onRefresh }: { incidents: Incident[]; onOpen: (id: string) => void; onRefresh: () => Promise<void> }) {
+  const [hub, setHub] = useState<import('../../src/hub').HubStatus>();
+  const [busy, setBusy] = useState<string>();
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string }>();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const refreshHub = useCallback(() => sendRuntime<import('../../src/hub').HubStatus>({ type: 'tl:hub-status' }).then(setHub).catch(() => undefined), []);
+  useEffect(() => {
+    void refreshHub();
+  }, [refreshHub]);
+
+  const syncHub = async () => {
+    setBusy('sync');
+    setMsg(undefined);
+    try {
+      const created = await sendRuntime<Incident[]>({ type: 'tl:hub-sync' });
+      await onRefresh();
+      await refreshHub();
+      setMsg({ kind: 'ok', text: created.length ? `${created.length} incident(s) pulled from the Hub` : 'Nothing new on the Hub' });
+      if (created.length === 1) onOpen(created[0]!.incidentId);
+    } catch (e) {
+      setMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(undefined);
+    }
+  };
+
+  const importFile = async (f: File | undefined) => {
+    if (!f) return;
+    setBusy('import');
+    setMsg(undefined);
+    try {
+      const inc = await sendRuntime<Incident>({ type: 'tl:import-file', name: f.name, text: await f.text() });
+      await onRefresh();
+      if (inc.status === 'error') setMsg({ kind: 'err', text: inc.error ?? 'import failed' });
+      else onOpen(inc.incidentId);
+    } catch (e) {
+      setMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(undefined);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const originBadge = (i: Incident) => (i.origin === 'hub' ? <span className="badge">{i.context?.source.tool.name ?? 'Hub'}</span> : i.origin === 'import' ? <span className="badge">{i.context?.source.tool.name ?? 'import'}</span> : null);
+
+  return (
+    <div style={{ padding: 12 }}>
+      <div className="row between">
+        <h1>Incidents</h1>
+        <button className="small" onClick={() => chrome.runtime.openOptionsPage()}>Settings</button>
+      </div>
+      <div className="row" style={{ gap: 6, marginBottom: 8 }}>
+        <button className="small" onClick={syncHub} disabled={busy !== undefined || hub?.enabled === false} title={hub?.enabled === false ? 'Enable the Hub in Settings → API testing tools' : hub?.reachable ? `Hub at ${hub.url}` : hub?.error}>
+          {busy === 'sync' ? 'Syncing…' : `Sync from Hub${hub?.pending ? ` (${hub.pending} new)` : ''}`}
+        </button>
+        <button className="small" onClick={() => fileRef.current?.click()} disabled={busy !== undefined} title="HAR 1.2, Newman run JSON (-r json) or TestLens Postman payload">
+          {busy === 'import' ? 'Importing…' : 'Import HAR / Newman file'}
+        </button>
+        <input ref={fileRef} type="file" accept=".har,.json,application/json" style={{ display: 'none' }} onChange={(e) => void importFile(e.target.files?.[0])} />
+        {hub?.enabled && <span className={`muted`} style={{ fontSize: 11 }}>{hub.reachable ? <span className="ok">● Hub online</span> : <span className="err">● Hub offline — run: npx testlens-hub</span>}</span>}
+      </div>
+      {msg && <p className={msg.kind === 'err' ? 'err' : 'ok'}>{msg.text}</p>}
+      {!incidents.length && <p className="muted">No incidents yet. Click the TestLens icon on a monitored tab and choose “Report Issue”, pull one from the Hub, or import a HAR / Newman file.</p>}
+      <div className="list">
+        {incidents.map((i) => (
+          <div key={i.incidentId} className="item" style={{ cursor: 'pointer' }} onClick={() => onOpen(i.incidentId)}>
+            <div className="body">
+              <div className="title">
+                {i.draft?.summary ?? i.tab.title ?? i.tab.url} {originBadge(i)}
+              </div>
+              <div className="reasons">
+                {new Date(i.triggerAt).toLocaleString()} · {i.status}
+                {createdOf(i)?.key ? ` · ${createdOf(i)!.key}` : ''}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

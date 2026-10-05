@@ -83,6 +83,10 @@ export type RuntimeRequest =
   | { type: 'tl:ai-apply'; incidentId: string; fields: ('summary' | 'stepsToReproduce' | 'expectedResult' | 'actualResult')[] }
   | { type: 'tl:ai-projection'; incidentId: string }
   | { type: 'tl:ai-store'; incidentId: string; analysis: import('@testlens/schema').Analysis }
+  | { type: 'tl:hub-status' }
+  | { type: 'tl:hub-sync' }
+  | { type: 'tl:hub-test'; url: string }
+  | { type: 'tl:import-file'; name: string; text: string }
   | { type: 'tl:ai-test'; ai: import('./settings').AiSettings };
 
 /** Messages addressed to the offscreen recorder document (ignored by the background). */

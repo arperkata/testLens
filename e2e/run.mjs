@@ -49,6 +49,30 @@ fs.mkdirSync(outDir, { recursive: true });
 const PORT = 4317;
 const { server } = await startFixture(PORT);
 const APP = `http://localhost:${PORT}`;
+
+// Local Hub (API-testing ingestion) as a child process on its own port and temp data dir
+const HUB_PORT = 7332;
+const HUB = `http://localhost:${HUB_PORT}`;
+const hubData = fs.mkdtempSync(path.join(os.tmpdir(), 'tl-hub-'));
+const { spawn } = await import('node:child_process');
+const hubProc = spawn(process.execPath, ['--import', 'tsx', path.join(root, 'apps/hub/src/server.ts')], { env: { ...process.env, TL_HUB_PORT: String(HUB_PORT), TL_HUB_DATA: hubData }, stdio: ['ignore', 'pipe', 'pipe'] });
+hubProc.stderr.on('data', (d) => console.error('[hub stderr]', String(d).trim()));
+await new Promise((resolve, reject) => {
+  const t = setTimeout(() => reject(new Error('hub did not start')), 20000);
+  const tryHealth = async () => {
+    try {
+      const r = await fetch(`${HUB}/health`);
+      if (r.ok) {
+        clearTimeout(t);
+        return resolve();
+      }
+    } catch {
+      /* not yet */
+    }
+    setTimeout(tryHealth, 300);
+  };
+  void tryHealth();
+});
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tl-e2e-'));
 
 const failures = [];
@@ -80,7 +104,7 @@ try {
   const cfgPage = await context.newPage();
   await cfgPage.goto(`chrome-extension://${extId}/options.html`);
   await cfgPage.evaluate(
-    async ({ APP }) => {
+    async ({ APP, HUB }) => {
       const settings = {
         monitoredOrigins: [APP],
         preWindowMs: 300000,
@@ -96,6 +120,7 @@ try {
         telemetryHostsExtra: [],
         retentionDays: 7,
         ai: { enabled: true, provider: 'openai', apiKey: 'test-key', model: 'gpt-4o-mini', baseUrl: `${APP}/openai/v1`, autoRun: false, includeBodies: true },
+        hub: { enabled: true, url: HUB, autoSync: false },
         onboarded: true,
         tracker: {
           trackerId: 'jira-cloud',
@@ -111,7 +136,7 @@ try {
       await chrome.storage.local.set({ 'tl.settings': settings });
       await chrome.runtime.sendMessage({ type: 'tl:apply-monitoring' });
     },
-    { APP },
+    { APP, HUB },
   );
   const regs = await cfgPage.evaluate(() => chrome.scripting.getRegisteredContentScripts());
   check(regs.length === 2, `content scripts registered for monitored origin (${regs.map((r) => r.id).join(',')})`);
@@ -226,13 +251,54 @@ try {
 
     // save the viewer & screenshot for manual inspection
     if (inc.warnings?.length) console.log('  warnings:', inc.warnings.join(' | '));
-    for (const kind of ['incident-viewer', 'screenshot', 'har-focused', 'network-log']) {
+    for (const kind of ['incident-viewer', 'screenshot', 'har-focused', 'network-log', 'video']) {
       const a = ctx.artifacts.find((x) => x.kind === kind);
       if (!a) continue;
       const b = await cfgPage.evaluate((ref) => chrome.runtime.sendMessage({ type: 'tl:get-blob', blobId: ref }), a.storage.ref);
       const data = Buffer.from(b.data.dataUrl.split(',')[1], 'base64');
       fs.writeFileSync(path.join(outDir, a.fileName), data);
     }
+  }
+
+  // ---- API testing: Postman payload → Hub → extension sync; HAR import directly in the extension ----
+  const postmanPayload = {
+    source: 'postman',
+    timestamp: new Date().toISOString(),
+    collection: 'Merchant API',
+    requestName: 'Create receipt',
+    environment: { name: 'QA' },
+    request: { method: 'POST', url: `${APP}/api/merchant/receipt`, headers: [{ key: 'Authorization', value: 'Bearer secret-token-value-9876543210' }, { key: 'Content-Type', value: 'application/json' }], body: { mode: 'raw', raw: '{"amount":42,"password":"hunter2"}' } },
+    response: { code: 500, status: 'Internal Server Error', headers: [{ key: 'content-type', value: 'application/json' }, { key: 'x-request-id', value: 'req-hub-1' }], body: '{"error":"db timeout"}', responseTime: 812 },
+    tests: [{ name: 'status is 201', passed: false, error: 'expected 500 to equal 201' }, { name: 'fast enough', passed: true }],
+  };
+  const ingest = await fetch(`${HUB}/ingest/postman`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(postmanPayload) });
+  const ingestBody = await ingest.json();
+  check(ingest.status === 201 && ingestBody.incidentId, `hub ingested the Postman payload (${ingestBody.title ?? ingestBody.error})`);
+  const hubList = await (await fetch(`${HUB}/incidents`)).json();
+  check(hubList.length === 1 && hubList[0].source === 'postman', 'hub lists the incident');
+  const hubStatus = await cfgPage.evaluate(() => chrome.runtime.sendMessage({ type: 'tl:hub-status' }));
+  check(hubStatus.ok && hubStatus.data.reachable && hubStatus.data.pending === 1, `extension sees the hub with 1 pending incident (${JSON.stringify(hubStatus.data)})`);
+  const synced = await cfgPage.evaluate(() => chrome.runtime.sendMessage({ type: 'tl:hub-sync' }));
+  check(synced.ok && synced.data.length === 1 && synced.data[0].status === 'ready', `hub sync imported the incident (${synced.ok ? synced.data[0]?.status : synced.error})`);
+  if (synced.ok && synced.data[0]) {
+    const h = synced.data[0];
+    check(h.origin === 'hub' && h.hubIncidentId === ingestBody.incidentId, 'imported incident carries hub origin and id');
+    check(h.context.source.connectorId === 'postman' && h.context.exchanges.length === 1, 'postman context preserved');
+    check(!JSON.stringify(h.context).includes('hunter2') && !JSON.stringify(h.context).includes('secret-token-value'), 'postman secrets redacted locally');
+    check(h.draft.summary.includes('Assertion failed') || h.draft.summary.includes('returns 500'), `postman draft summary: ${h.draft.summary}`);
+    check(h.draft.stepsToReproduce.some((s) => s.includes('Merchant API')), 'postman steps reference the collection');
+    const hubPrev = await cfgPage.evaluate((id) => chrome.runtime.sendMessage({ type: 'tl:tracker-preview', incidentId: id }), h.incidentId);
+    check(hubPrev.ok && hubPrev.data.validation.ok, 'postman incident previews for the tracker');
+    const again = await cfgPage.evaluate(() => chrome.runtime.sendMessage({ type: 'tl:hub-sync' }));
+    check(again.ok && again.data.length === 0, 'second sync imports nothing (dedupe by hub id)');
+  }
+  // HAR import straight into the extension (no Hub involved)
+  const harText = fs.readFileSync(path.join(outDir, 'network-focused.har'), 'utf8');
+  const imported = await cfgPage.evaluate(({ name, text }) => chrome.runtime.sendMessage({ type: 'tl:import-file', name, text }), { name: 'network-focused.har', text: harText });
+  check(imported.ok && imported.data.status === 'ready', `HAR import creates a ready incident (${imported.ok ? imported.data.status : imported.error})`);
+  if (imported.ok && imported.data.context) {
+    check(imported.data.origin === 'import' && imported.data.context.source.connectorId === 'har', 'HAR incident has import origin');
+    check(imported.data.context.exchanges.some((e) => e.response?.status === 500), 'HAR incident keeps the 500 exchange');
   }
 
   // ---- AI enhancement against the mock OpenAI ----
@@ -278,28 +344,51 @@ try {
     check(detailText.includes('Request payload') && detailText.includes('Response body'), 'evidence tab shows request/response detail');
     check((await panel.locator('mark').count()) > 0, 'correlation id highlighted in detail view');
   }
-  const videoEls = panel.locator('video');
-  check((await videoEls.count()) === 1, `evidence tab shows a single video player (${await videoEls.count()})`);
-  if (await videoEls.count()) {
-    const info = await videoEls.first().evaluate((v) => new Promise((resolve) => {
-      const el = v;
-      const done = () => resolve({ ok: el.readyState >= 1, duration: el.duration, w: el.videoWidth, h: el.videoHeight });
-      if (el.readyState >= 1) return done();
-      el.onloadedmetadata = done;
-      el.onerror = () => resolve({ ok: false });
-      setTimeout(done, 5000);
-    }));
-    check(info.ok === true, `stitched video loads metadata (decodable WebM, ${info.w}x${info.h})`);
-    // seek to the end so the browser decodes across the segment joins
-    const seek = await videoEls.first().evaluate((v) => new Promise((resolve) => {
-      const el = v;
-      const target = Number.isFinite(el.duration) ? el.duration - 0.2 : 8;
-      el.onseeked = () => resolve({ ok: true, t: el.currentTime });
-      el.onerror = () => resolve({ ok: false });
-      el.currentTime = target;
-      setTimeout(() => resolve({ ok: el.currentTime > 5, t: el.currentTime }), 5000);
-    }));
-    check(seek.ok === true, `video seeks across the joins (to ${Number(seek.t).toFixed(1)}s)`);
+  await panel.waitForSelector('video', { timeout: 10000 }).catch(() => undefined);
+  const videoCount = await panel.locator('video').count();
+  check(videoCount === 1, `evidence tab shows a single video player (${videoCount})`);
+  // Decode check on a dedicated page with the saved file, independent of the side panel's re-renders:
+  // load metadata, then step through several positions including the very end so every join is decoded.
+  const savedVideo = fs.readdirSync(outDir).filter((f) => /^recording_.*\.webm$/.test(f)).map((f) => path.join(outDir, f)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+  if (savedVideo) {
+    const probe = await context.newPage();
+    await probe.goto(`${APP}/`);
+    const v = await probe.evaluate(
+      (b64) =>
+        new Promise((resolve) => {
+          const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+          const el = document.createElement('video');
+          el.muted = true;
+          el.preload = 'auto';
+          document.body.appendChild(el);
+          el.src = URL.createObjectURL(new Blob([bytes], { type: 'video/webm' }));
+          const fail = (why) => resolve({ ok: false, why, err: el.error ? `${el.error.code}:${el.error.message}` : undefined });
+          el.onerror = () => fail('media error');
+          const timer = setTimeout(() => fail('timeout'), 20000);
+          el.onloadedmetadata = async () => {
+            const d = el.duration;
+            const points = Number.isFinite(d) && d > 1 ? [d * 0.25, d * 0.5, d * 0.75, d - 0.15] : [2, 5, 8];
+            const reached = [];
+            for (const t of points) {
+              const ok = await new Promise((res) => {
+                const onSeek = () => { el.removeEventListener('seeked', onSeek); res(true); };
+                el.addEventListener('seeked', onSeek);
+                el.currentTime = t;
+                setTimeout(() => { el.removeEventListener('seeked', onSeek); res(false); }, 5000);
+              });
+              if (!ok) { clearTimeout(timer); return fail(`seek to ${t.toFixed(1)}s did not complete`); }
+              reached.push(el.currentTime.toFixed(1));
+            }
+            clearTimeout(timer);
+            resolve({ ok: true, duration: d, w: el.videoWidth, h: el.videoHeight, reached });
+          };
+        }),
+      fs.readFileSync(savedVideo).toString('base64'),
+    );
+    check(v.ok === true, `stitched video decodes and seeks across the joins (${v.ok ? `${v.w}x${v.h}, ${Number(v.duration).toFixed(1)}s, seeked to ${v.reached.join('/')}s` : `${v.why} ${v.err ?? ''}`})`);
+    await probe.close();
+  } else {
+    check(false, 'stitched video file saved for probing');
   }
   await panel.screenshot({ path: path.join(outDir, 'sidepanel-evidence.png'), fullPage: true });
   // Jira tab: destination comes from settings and can be changed per incident
@@ -357,7 +446,9 @@ try {
 } finally {
   await context.close().catch(() => {});
   server.close();
+  hubProc.kill();
   fs.rmSync(userDataDir, { recursive: true, force: true });
+  fs.rmSync(hubData, { recursive: true, force: true });
 }
 
 console.log(failures.length ? `\n${failures.length} check(s) failed:\n - ${failures.join('\n - ')}` : '\nALL CHECKS PASSED');

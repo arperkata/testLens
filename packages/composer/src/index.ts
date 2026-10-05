@@ -128,6 +128,21 @@ export function compose(ctx: BugContext, opts: ComposerOptions = {}): BugDraft {
 // ---------------------------------------------------------------------------
 
 export function deriveSteps(ctx: BugContext, max: number): string[] {
+  // API-tool and import sources have no clicks to replay: describe how to re-send the failing request.
+  if (ctx.source.connectorId !== 'browser' && ctx.interactions.length === 0) {
+    const focal = ctx.evidence?.focal;
+    const ex = focal?.kind === 'exchange' ? ctx.exchanges.find((e) => e.id === focal.refId) : focal?.kind === 'assertion' ? ctx.exchanges.find((e) => e.id === ctx.assertions.find((a) => a.id === focal.refId)?.exchangeId) : ctx.exchanges.find((e) => e.error || (e.response && e.response.status >= 400));
+    const steps: string[] = [];
+    const exec = ctx.execution;
+    if (exec?.collection) steps.push(`Open the ${ctx.source.tool.name} collection "${exec.collection}"${ctx.environment.name ? ` with environment "${ctx.environment.name}"` : ''}`);
+    else if (ctx.source.captureMode === 'import') steps.push(`Reproduce the traffic captured in ${ctx.application.name ?? 'the imported file'}`);
+    if (exec?.testName) steps.push(`Run the request "${exec.testName}"${exec.iteration !== undefined ? ` (iteration ${exec.iteration + 1})` : ''}`);
+    if (ex) steps.push(`Send ${ex.method} ${ex.url}${ex.request.body ? ' with the request body shown below' : ''}`);
+    const failedAssertions = ctx.assertions.filter((a) => !a.passed);
+    if (failedAssertions.length) steps.push(`Check the assertion${failedAssertions.length > 1 ? 's' : ''}: ${failedAssertions.slice(0, 3).map((a) => `"${a.name}"`).join(', ')}${failedAssertions.length > 3 ? ', …' : ''}`);
+    steps.push('Observe the failure (see Actual result).');
+    return steps.slice(0, max);
+  }
   const window = ctx.evidence?.window;
   const start = window ? window.start - 60_000 : ctx.trigger.at - 120_000;
   const end = ctx.trigger.at;

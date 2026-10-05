@@ -228,6 +228,51 @@ export async function patchIncident(incidentId: string, patch: IncidentPatch): P
 }
 
 /**
+ * Create an incident from an already-normalised BugContext (Hub sync, HAR/Newman import).
+ * Runs the same redaction → evidence → compose → artifacts pipeline as a browser incident.
+ */
+export async function createIncidentFromContext(
+  ctx: BugContext,
+  opts: { origin: 'hub' | 'import'; hubIncidentId?: string; extraArtifacts?: { kind: Artifact['kind']; fileName: string; mime: string; blob: Blob; include?: boolean }[] } = { origin: 'import' },
+): Promise<StoredIncident> {
+  const settings = await loadSettings();
+  const incidentId = ctx.incidentId || newId('inc_');
+  const base: StoredIncident = {
+    incidentId,
+    tabId: -1,
+    createdAt: Date.now(),
+    triggerAt: ctx.trigger.at,
+    postUntil: ctx.trigger.at,
+    status: 'collecting',
+    tab: { url: ctx.application.url ?? '', title: ctx.application.title ?? ctx.source.tool.name, windowId: -1 },
+    note: ctx.trigger.userNote,
+    origin: opts.origin,
+    hubIncidentId: opts.hubIncidentId,
+  };
+  await putIncident(base);
+  try {
+    const artifacts: Artifact[] = [];
+    for (const a of opts.extraArtifacts ?? []) {
+      const id = `${incidentId}:${a.kind}:${artifacts.length}`;
+      await putBlob(id, incidentId, a.blob);
+      artifacts.push(artifact(id, a.kind, a.fileName, a.mime, a.blob.size, a.kind === 'raw-connector-payload' ? 'unredacted' : 'redacted', undefined, a.include ?? false));
+    }
+    const prepared: BugContext = { ...ctx, incidentId, artifacts: [...ctx.artifacts.filter((x) => x.storage.type !== 'hub'), ...artifacts] };
+    const { context, draft } = await process(prepared, settings);
+    const withText = await writeTextArtifacts({ ...base, context, draft });
+    await putIncident({ ...base, status: 'ready', context: withText.context, draft: withText.draft });
+    if (settings.ai.enabled && settings.ai.autoRun) {
+      void import('./ai')
+        .then((m) => m.enhance(incidentId))
+        .catch(() => undefined);
+    }
+  } catch (e) {
+    await putIncident({ ...base, status: 'error', error: e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : String(e) });
+  }
+  return (await getIncident(incidentId))!;
+}
+
+/**
  * Recompose derived sections (e.g. after an AI analysis arrives) while keeping the tester's
  * summary/steps/expected/actual/labels and the AI-applied markers, then refresh text artifacts.
  */
