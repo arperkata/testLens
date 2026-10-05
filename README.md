@@ -32,6 +32,8 @@ npm run build          # → apps/extension/.output/chrome-mv3
 
 Load `apps/extension/.output/chrome-mv3` as an unpacked extension (chrome://extensions → Developer mode → Load unpacked). For live development run `npm run dev`.
 
+Full setup, every setting, Jira field mapping, troubleshooting and the test harness are documented in **[docs/SETUP.md](docs/SETUP.md)**.
+
 ## First run
 
 1. Open TestLens settings (opens automatically on install).
