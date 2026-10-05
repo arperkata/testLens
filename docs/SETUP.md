@@ -32,7 +32,7 @@ Contents
 |---|---|---|
 | Node.js | 20 or newer (tested on 25) | https://nodejs.org |
 | npm | 10 or newer | ships with Node |
-| Browser | Chrome 116+ or Edge 116+ | Manifest V3 with side panel support |
+| Browser | Chrome 116+ or Edge 116+ | Manifest V3 with side panel support. Other Chromium browsers (Brave, Opera, Vivaldi, Arc) are expected to work but are untested. Chrome's built-in on-device AI needs Chrome 138+ and is Chrome-only; Edge users pick Groq or another provider. Firefox needs a separate build (sidebar instead of side panel, screen-share instead of tab capture) and is not available yet. Safari is not planned. |
 | Jira | Jira Cloud (`*.atlassian.net`) | Jira Server / Data Center is not supported yet |
 | Jira account | your own | you need "Create issues" permission in the target project |
 
