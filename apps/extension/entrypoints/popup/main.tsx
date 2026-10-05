@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import '../../src/ui/base.css';
 import { sendRuntime, type TabStatus } from '../../src/messages';
-import { describeEntry, loadSettings, normalizeOriginInput, saveSettings } from '../../src/settings';
+import { describeEntry, loadSettings, normalizeOriginInput, originsToMatchPatterns, saveSettings } from '../../src/settings';
 
 function Popup() {
   const [tab, setTab] = useState<chrome.tabs.Tab>();
@@ -42,7 +42,7 @@ function Popup() {
     if (!origin) return;
     setBusy(true);
     try {
-      const granted = await chrome.permissions.request({ origins: [`${origin}/*`] });
+      const granted = await chrome.permissions.request({ origins: originsToMatchPatterns([origin]) });
       if (!granted) throw new Error('Permission was not granted');
       const s = await loadSettings();
       if (!s.monitoredOrigins.includes(origin)) s.monitoredOrigins.push(origin);
