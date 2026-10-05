@@ -130,7 +130,7 @@ export async function finalizeIncident(incidentId: string): Promise<StoredIncide
     await putIncident({ ...inc, status: 'ready', context: withText.context, draft: withText.draft });
     void chrome.alarms.clear(`tl-finalize:${incidentId}`);
     // Optional AI pass runs after the incident is usable, so a slow or failing provider never blocks review.
-    if (settings.ai.enabled && settings.ai.autoRun && settings.ai.apiKey) {
+    if (settings.ai.enabled && settings.ai.autoRun) {
       void import('./ai')
         .then((m) => m.enhance(incidentId))
         .catch(async (e) => {

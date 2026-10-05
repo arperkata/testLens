@@ -26,7 +26,8 @@ export interface TrackerSettings {
 
 export interface AiSettings {
   enabled: boolean;
-  provider: 'openai';
+  /** Preset id from @testlens/ai PROVIDER_PRESETS: 'gemini' | 'groq' | 'openrouter' | 'ollama' | 'openai' */
+  provider: string;
   apiKey: string;
   model: string;
   baseUrl: string;
@@ -36,7 +37,8 @@ export interface AiSettings {
   includeBodies: boolean;
 }
 
-export const DEFAULT_AI: AiSettings = { enabled: false, provider: 'openai', apiKey: '', model: 'gpt-4o-mini', baseUrl: 'https://api.openai.com/v1', autoRun: true, includeBodies: true };
+/** Default to Groq's free tier; the UI fills baseUrl/model from the preset when the provider changes. */
+export const DEFAULT_AI: AiSettings = { enabled: false, provider: 'groq', apiKey: '', model: 'llama-3.3-70b-versatile', baseUrl: 'https://api.groq.com/openai/v1', autoRun: true, includeBodies: true };
 
 /** @deprecated pre-multi-tracker shape; migrated to `tracker` on load. */
 export type JiraSettings = Omit<TrackerSettings, 'trackerId' | 'projectName'>;

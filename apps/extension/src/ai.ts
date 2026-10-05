@@ -1,5 +1,5 @@
 /** AI analysis service used by the background: builds the redacted projection, calls the provider, stores the result. */
-import { buildAnalysisInput, getProvider, type AnalysisInput } from '@testlens/ai';
+import { buildAnalysisInput, getPreset, getProvider, type AnalysisInput } from '@testlens/ai';
 import type { BugDraft } from '@testlens/schema';
 import { getIncident, type StoredIncident } from './buffer/db';
 import { recomposeIncident } from './incident';
@@ -15,7 +15,7 @@ export async function ensureAiPermission(baseUrl: string) {
 
 function requireAi(ai: AiSettings): AiSettings {
   if (!ai.enabled) throw new Error('AI analysis is turned off in TestLens settings.');
-  if (!ai.apiKey) throw new Error('No AI API key configured.');
+  if (getPreset(ai.provider).needsKey && !ai.apiKey) throw new Error(`No API key configured for ${getPreset(ai.provider).displayName}.`);
   return ai;
 }
 
@@ -71,7 +71,7 @@ export async function apply(incidentId: string, fields: AiField[]): Promise<Stor
 }
 
 export async function testConnection(ai: AiSettings) {
-  if (!ai.apiKey) throw new Error('Enter an API key first');
+  if (getPreset(ai.provider).needsKey && !ai.apiKey) throw new Error('Enter an API key first');
   await ensureAiPermission(ai.baseUrl);
   return getProvider(ai.provider).test({ apiKey: ai.apiKey, model: ai.model, baseUrl: ai.baseUrl });
 }

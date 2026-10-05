@@ -6,6 +6,7 @@ import { sendRuntime } from '../../src/messages';
 import { ARTIFACT_KIND_LABELS, DEFAULT_SETTINGS, describeEntry, exportSettings, importSettings, loadSettings, normalizeOriginInput, originsToMatchPatterns, saveSettings, type Settings, type TrackerSettings } from '../../src/settings';
 import { buildMappingFields, optionalFieldsWithValues, requiredFields, stringValues, withDefaults } from '../../src/jira-mapping';
 import { FieldControl } from '../../src/ui/FieldControl';
+import { PROVIDER_PRESETS } from '@testlens/ai';
 
 function Options() {
   const [s, setS] = useState<Settings>();
@@ -497,9 +498,18 @@ function TrackerSection({ s, update, persist, setMsg }: SectionProps) {
 
 function AiSection({ s, update, persist, setMsg }: SectionProps) {
   const ai = s.ai;
+  const preset = PROVIDER_PRESETS.find((p) => p.id === ai.provider) ?? PROVIDER_PRESETS[0]!;
   const setAi = (p: Partial<typeof ai>) => update({ ai: { ...ai, ...p } });
   const [testing, setTesting] = useState(false);
   const [ok, setOk] = useState<string>();
+
+  const switchProvider = (id: string) => {
+    const p = PROVIDER_PRESETS.find((x) => x.id === id);
+    if (!p) return;
+    setOk(undefined);
+    update({ ai: { ...ai, provider: p.id, baseUrl: p.baseUrl, model: p.defaultModel, apiKey: '' } });
+  };
+
   const connect = async () => {
     setTesting(true);
     try {
@@ -510,58 +520,87 @@ function AiSection({ s, update, persist, setMsg }: SectionProps) {
       await persist({ ...s, ai: next });
       const r = await sendRuntime<{ model: string }>({ type: 'tl:ai-test', ai: next });
       setOk(r.model);
-      setMsg?.({ kind: 'ok', text: `AI connected (${r.model})` });
+      setMsg?.({ kind: 'ok', text: `${preset.displayName} connected (${r.model}). AI analysis is now enabled.` });
     } catch (e) {
       setMsg?.({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
     } finally {
       setTesting(false);
     }
   };
+
+  const tierBadge = (t: typeof preset.tier) => (t === 'free' ? <span className="badge ok">free tier</span> : t === 'local' ? <span className="badge ok">local, free</span> : <span className="badge warn">paid</span>);
+  const ready = Boolean(ai.baseUrl) && (!preset.needsKey || Boolean(ai.apiKey));
+
   return (
     <div className="card">
       <h2 style={{ marginTop: 0 }}>4. AI analysis (optional)</h2>
       <p className="muted">
-        An AI model can rewrite the steps to reproduce from the actions recorded in the rolling window and draft summary, expected/actual and a technical analysis. Suggestions appear on the Bug tab and replace nothing until you click Apply; applied text is marked as AI in the bug. Off by default.
+        An AI model rewrites the <b>steps to reproduce</b> from the actions recorded in the rolling window and drafts the <b>bug summary</b>, expected/actual and a short technical analysis. Suggestions appear on the Bug tab and replace nothing until you click Apply; applied text is marked as AI. Off until you connect a provider.
       </p>
+
       <div className="card" style={{ background: 'var(--panel2)' }}>
+        <div className="row between">
+          <b>Step 1 — choose a provider and get a key</b>
+          {preset.keyUrl && (
+            <button className="primary small" onClick={() => chrome.tabs.create({ url: preset.keyUrl! })}>
+              {preset.needsKey ? `Open ${preset.displayName.replace(/\s*\(.*\)$/, '')} API keys page ↗` : `Install ${preset.displayName.replace(/\s*\(.*\)$/, '')} ↗`}
+            </button>
+          )}
+        </div>
+        <label>Provider</label>
+        <select value={preset.id} onChange={(e) => switchProvider(e.target.value)} style={{ maxWidth: 420 }}>
+          {PROVIDER_PRESETS.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.displayName}
+              {p.recommended ? ' — recommended' : ''}
+            </option>
+          ))}
+        </select>
+        <p className="muted" style={{ margin: '6px 0 0' }}>
+          {tierBadge(preset.tier)} {preset.blurb}
+        </p>
+        <p className="muted" style={{ margin: '4px 0 0' }}>
+          <b>Data:</b> {preset.dataNote}
+        </p>
+      </div>
+
+      <div className="card" style={{ background: 'var(--panel2)', marginTop: 8 }}>
         <b>What is sent to the provider</b>
         <p className="muted" style={{ margin: '4px 0 0' }}>
           Redacted only: the click/input/navigation trail with timestamps, the focal request's method, URL path, status, duration and a short body snippet (optional below), console errors, JavaScript errors, the engine's observations and your current draft. Never sent: headers, cookies, tokens, full bodies, screenshots, replay, video. The exact payload is viewable per bug via "What is sent?".
         </p>
       </div>
-      <div className="row between" style={{ marginTop: 8 }}>
-        <label className="inline" style={{ margin: 0 }}><input type="checkbox" checked={ai.enabled} onChange={(e) => setAi({ enabled: e.target.checked })} /> Enable AI analysis</label>
-        <button className="primary small" onClick={() => chrome.tabs.create({ url: 'https://platform.openai.com/api-keys' })}>Open OpenAI API keys page ↗</button>
-      </div>
+
+      <h3 style={{ marginBottom: 0 }}>Step 2 — connection</h3>
       <div className="row" style={{ gap: 12 }}>
-        <div style={{ flex: 1, minWidth: 160 }}>
-          <label>Provider</label>
-          <select value={ai.provider} onChange={(e) => setAi({ provider: e.target.value as 'openai' })}>
-            <option value="openai">OpenAI</option>
-          </select>
-        </div>
-        <div style={{ flex: 1, minWidth: 160 }}>
+        <div style={{ flex: 1, minWidth: 180 }}>
           <label>Model</label>
-          <input value={ai.model} onChange={(e) => setAi({ model: e.target.value.trim() })} placeholder="gpt-4o-mini" />
+          <input value={ai.model} onChange={(e) => setAi({ model: e.target.value.trim() })} placeholder={preset.defaultModel} />
         </div>
-        <div style={{ flex: 2, minWidth: 220 }}>
+        <div style={{ flex: 2, minWidth: 240 }}>
           <label>API base URL</label>
-          <input value={ai.baseUrl} onChange={(e) => setAi({ baseUrl: e.target.value.trim() })} placeholder="https://api.openai.com/v1" title="Azure OpenAI or a compatible gateway can be used by changing this" />
+          <input value={ai.baseUrl} onChange={(e) => setAi({ baseUrl: e.target.value.trim() })} placeholder={preset.baseUrl} title="Any OpenAI-compatible gateway works here" />
         </div>
-        <div style={{ flex: 3, minWidth: 240 }}>
-          <label>API key</label>
-          <input type="password" value={ai.apiKey} onChange={(e) => setAi({ apiKey: e.target.value.trim() })} />
-          <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>Stored only in this browser profile; never synced or exported.</div>
-        </div>
+        {preset.needsKey && (
+          <div style={{ flex: 3, minWidth: 240 }}>
+            <label>API key</label>
+            <input type="password" value={ai.apiKey} onChange={(e) => setAi({ apiKey: e.target.value.trim() })} />
+            <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>Stored only in this browser profile; never synced or exported.</div>
+          </div>
+        )}
       </div>
       <div style={{ marginTop: 6 }}>
         <label className="inline"><input type="checkbox" checked={ai.autoRun} onChange={(e) => setAi({ autoRun: e.target.checked })} /> Run automatically when I click Report Issue</label>
         <label className="inline"><input type="checkbox" checked={ai.includeBodies} onChange={(e) => setAi({ includeBodies: e.target.checked })} /> Include short redacted body snippets of the failed request</label>
+        <label className="inline"><input type="checkbox" checked={ai.enabled} onChange={(e) => setAi({ enabled: e.target.checked })} /> AI analysis enabled</label>
       </div>
-      <div className="row" style={{ marginTop: 10 }}>
-        <button className="primary" onClick={connect} disabled={testing || !ai.apiKey || !ai.baseUrl}>{testing ? 'Testing…' : 'Connect & test'}</button>
+
+      <h3 style={{ marginBottom: 0 }}>Step 3 — connect</h3>
+      <div className="row" style={{ marginTop: 6 }}>
+        <button className="primary" onClick={connect} disabled={testing || !ready}>{testing ? 'Testing…' : 'Connect & test'}</button>
         <button onClick={() => persist()}>Save</button>
         {ok && <span className="ok">Model reachable: {ok}</span>}
+        {!ready && <span className="muted">{preset.needsKey ? 'Enter the API key to enable' : 'Enter the base URL to enable'}</span>}
       </div>
     </div>
   );

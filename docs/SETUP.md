@@ -179,12 +179,21 @@ Summary, description, project and issue type are always filled by TestLens and n
 
 ### 4.4a AI analysis (optional, off by default)
 
-TestLens can ask an AI model to rewrite the **steps to reproduce** from the actions recorded in the rolling window and to draft summary, expected/actual and a short technical analysis. Settings → **AI analysis**:
+TestLens can ask an AI model to rewrite the **steps to reproduce** from the actions recorded in the rolling window and to draft the **bug summary**, expected/actual and a short technical analysis. Free-tier providers are supported; no paid account is needed. Settings → **AI analysis**:
 
-1. Click **Open OpenAI API keys page**, create a key, paste it into **API key**. The key is stored only in this browser profile and is never synced or exported.
-2. Keep the default model (`gpt-4o-mini`) or set another. **API base URL** can point to Azure OpenAI or any OpenAI-compatible gateway.
-3. Tick **Enable AI analysis**, click **Connect & test**, accept the permission prompt for the API host.
-4. **Run automatically when I click Report Issue** prepares the suggestion while the incident is assembled; otherwise use **Enhance with AI** on the Bug tab.
+| Provider | Cost | Key | Default model | Data handling |
+|---|---|---|---|---|
+| **Groq** (default, recommended) | free tier | console.groq.com → API Keys | `llama-3.3-70b-versatile` | processed by Groq, not used for training per their policy |
+| Google Gemini | free tier | aistudio.google.com → Get API key | `gemini-2.0-flash` | free tier may be used to improve Google products; avoid production personal data |
+| OpenRouter | free models | openrouter.ai → Keys | `meta-llama/llama-3.3-70b-instruct:free` | free models may log prompts |
+| Ollama | free, local | none; install from ollama.com and run `ollama pull llama3.1:8b` | `llama3.1:8b` | nothing leaves your machine |
+| OpenAI | paid | platform.openai.com → API keys | `gpt-4o-mini` | not used for training by default |
+
+1. **Step 1**: pick the provider; click **Open … API keys page**, create a key, paste it into **API key**. The key is stored only in this browser profile and is never synced or exported. Model and base URL are filled from the preset; the base URL can point at any OpenAI-compatible gateway (Azure OpenAI, LiteLLM, vLLM…).
+2. **Step 3**: click **Connect & test** and accept the permission prompt for the provider's host. This also enables AI analysis.
+3. **Run automatically when I click Report Issue** prepares the suggestion while the incident is assembled; otherwise use **Enhance with AI** on the Bug tab.
+
+Free tiers have per-minute limits; a 429 message means wait a minute or pick a smaller model.
 
 What is sent, always redacted first: the click/input/navigation trail with relative timestamps, the focal request's method, URL path, status, duration and (optionally) a short body snippet, console errors, JavaScript errors, the evidence engine's observations and the current draft. Never sent: headers, cookies, tokens, full bodies, screenshots, replay, video. The exact payload for any bug is shown by **What is sent?** on the Bug tab.
 
