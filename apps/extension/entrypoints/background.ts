@@ -8,6 +8,9 @@ import { clearTab, expire, deleteIncident, getBlob, getIncident, listIncidents, 
 import { ingestPageExchange, installNetworkCapture } from '../src/capture/network';
 import { finalizeIncident, patchIncident, redactionTotals, rememberPageInfo, rerunEngine, startIncident } from '../src/incident';
 import * as tracker from '../src/tracker';
+import { isRecording, markEnded, recordingSince, recordingSupported, startRecording, startSyntheticRecording, stopRecording } from '../src/recording';
+import { expireVideo } from '../src/buffer/db';
+import type { OffscreenEvent } from '../src/messages';
 import type { CaptureMessage, ContentConfig, RuntimeRequest, RuntimeResponse, TabStatus } from '../src/messages';
 import { isMonitoredUrl, loadSettings, onSettingsChanged, originsToMatchPatterns, type Settings } from '../src/settings';
 import { newId } from '@testlens/schema';
@@ -115,7 +118,7 @@ export default defineBackground(() => {
   });
   chrome.tabs.onRemoved.addListener((tabId) => {
     monitoredTabs.delete(tabId);
-    void clearTab(tabId);
+    void stopRecording(tabId).then(() => clearTab(tabId));
     void chrome.storage.session.remove(`tl.pageinfo.${tabId}`);
   });
   chrome.webNavigation.onCommitted.addListener((d) => {
@@ -195,6 +198,7 @@ export default defineBackground(() => {
       const s = settings;
       const pre = s?.preWindowMs ?? 300_000;
       void expire(Date.now() - pre - 90_000);
+      void expireVideo(Date.now() - pre - 150_000);
       void purgeIncidents(Date.now() - (s?.retentionDays ?? 7) * 86_400_000);
     } else if (a.name.startsWith('tl-finalize:')) {
       void finalizeIncident(a.name.slice('tl-finalize:'.length));
@@ -207,10 +211,17 @@ export default defineBackground(() => {
   }
 
   // ---------------- runtime API ----------------
-  chrome.runtime.onMessage.addListener((req: RuntimeRequest, _sender, sendResponse: (r: RuntimeResponse) => void) => {
+  chrome.runtime.onMessage.addListener((req: RuntimeRequest | OffscreenEvent | { target?: string }, _sender, sendResponse: (r: RuntimeResponse) => void) => {
+    // messages addressed to the offscreen recorder are answered there, not here
+    if ((req as { target?: string }).target === 'offscreen') return false;
+    if ((req as OffscreenEvent).target === 'background') {
+      const ev = req as OffscreenEvent;
+      if (ev.type === 'recording-ended') void markEnded(ev.tabId);
+      return false;
+    }
     void (async () => {
       try {
-        const data = await handle(req);
+        const data = await handle(req as RuntimeRequest);
         sendResponse({ ok: true, data });
       } catch (e) {
         sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) });
@@ -239,7 +250,7 @@ export default defineBackground(() => {
       case 'tl:get-tab-status': {
         const tab = await chrome.tabs.get(req.tabId).catch(() => undefined);
         const { counts, oldest } = await tabCounts(req.tabId);
-        const st: TabStatus = { tabId: req.tabId, monitored: isMonitoredUrl(tab?.url, s), url: tab?.url, counts, oldestTs: oldest, recording: false, recordingSupported: false };
+        const st: TabStatus = { tabId: req.tabId, monitored: isMonitoredUrl(tab?.url, s), url: tab?.url, counts, oldestTs: oldest, recording: await isRecording(req.tabId), recordingSince: await recordingSince(req.tabId), recordingSupported: recordingSupported() };
         return st;
       }
       case 'tl:list-incidents':
@@ -284,8 +295,19 @@ export default defineBackground(() => {
       case 'tl:set-tracker-target':
         return tracker.setTarget(req.incidentId, req.target, req.saveAsDefault);
       case 'tl:start-tab-recording':
+        if (!recordingSupported()) throw new Error('Tab recording is not supported by this browser.');
+        await startRecording(req.tabId, req.streamId);
+        return true;
       case 'tl:stop-tab-recording':
-        throw new Error('Tab video recording is not available in this build yet.');
+        await stopRecording(req.tabId);
+        return true;
+      case 'tl:start-synthetic-recording':
+        await startSyntheticRecording(req.tabId, req.options);
+        return true;
+      case 'tl:recording-status': {
+        const st = (await chrome.storage.session.get('tl.recording'))['tl.recording'] ?? {};
+        return st;
+      }
     }
   }
 });

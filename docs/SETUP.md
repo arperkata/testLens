@@ -215,7 +215,7 @@ traceparent  = https://tempo.example.com/trace/{value}
 
 ## 5. Daily use
 
-1. Test normally in a monitored tab. The popup shows the live buffer: requests, console lines, errors, actions and whether replay is recording.
+1. Test normally in a monitored tab. The popup shows the live buffer: requests, console lines, errors, actions and whether replay is recording. If you want pixel video as well, click **Record this tab** in the popup once; Chrome requires that click per tab. Recording continues in the background until the tab closes or you click **Stop video**.
 2. When something goes wrong, click the TestLens icon. Optionally type what you saw in **What went wrong?**. Click **Report Issue**.
 3. The side panel opens on that tab only. It shows "Evidence preserved" while the post-click window runs, then the composed bug.
 4. **Bug tab**: check the focal event (change it from the candidate list if TestLens picked the wrong one), edit summary, steps, expected and actual, labels. Click **Save edits**.
@@ -237,7 +237,7 @@ traceparent  = https://tempo.example.com/trace/{value}
 | Clicks, inputs, selects, submits, Enter/Escape keys, SPA route changes, page loads | isolated content script and `webNavigation` | input values are never captured, only that a field changed |
 | DOM replay | rrweb | canvas and video content, cross-origin iframes are not replayed |
 | Screenshot | `captureVisibleTab` at Report Issue | visible viewport of the active tab only |
-| Tab video | not in this build | planned: one click per tab |
+| Tab video | `chrome.tabCapture` → offscreen MediaRecorder, rolling 60 s segments | **one click per tab**: Chrome only grants the capture stream from a toolbar click, so press **Record this tab** in the popup once per tab. Runs until the tab closes or you stop it. 720p max, 10 fps, ~600 kbit/s (about 4.5 MB per minute). Not available in Firefox. |
 | Page info | viewport, locale, timezone, online state, `<meta name="version">` | |
 
 TestLens cannot run on `chrome://` pages, the Chrome Web Store, other extensions' pages or sites blocked by enterprise policy.
@@ -250,6 +250,7 @@ TestLens cannot run on `chrome://` pages, the Chrome Web Store, other extensions
 |---|---|---|
 | `screenshot.png` | viewport at Report Issue | yes |
 | `replay.rrweb.json` | DOM replay for the window | yes |
+| `recording-NN_hhmmss-hhmmss.webm` | tab video segments overlapping the window, one file per 60 s segment (only when **Record this tab** was on) | yes |
 | `console.log` | console and errors in time order with the Report Issue marker | yes |
 | `network.log` | index of every request, then full request headers / payload / response headers / body for API and failed requests, correlation ids marked `>>>` | yes |
 | `network-focused.har` | HAR 1.2 of the selected evidence requests, with bodies | yes |

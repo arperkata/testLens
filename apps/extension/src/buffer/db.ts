@@ -71,33 +71,89 @@ export interface StoredBlob {
   blob: Blob;
 }
 
+/** One sealed video segment of the rolling tab recording. */
+export interface VideoSegment {
+  key: string; // `${tabId}:${start}`
+  tabId: number;
+  start: number;
+  end: number;
+  mime: string;
+  blob: Blob;
+}
+
 interface TLSchema extends DBSchema {
   events: { key: string; value: StoredEvent; indexes: { 'by-tab-ts': [number, number]; 'by-ts': number } };
   rrweb: { key: string; value: RrwebChunk; indexes: { 'by-tab-ts': [number, number]; 'by-ts': number } };
   incidents: { key: string; value: StoredIncident; indexes: { 'by-created': number } };
   blobs: { key: string; value: StoredBlob; indexes: { 'by-incident': string } };
+  video: { key: string; value: VideoSegment; indexes: { 'by-tab-start': [number, number]; 'by-end': number } };
 }
 
 let dbPromise: Promise<IDBPDatabase<TLSchema>> | undefined;
 
 export function db(): Promise<IDBPDatabase<TLSchema>> {
   if (!dbPromise) {
-    dbPromise = openDB<TLSchema>('testlens', 1, {
-      upgrade(d) {
-        const ev = d.createObjectStore('events', { keyPath: 'key' });
-        ev.createIndex('by-tab-ts', ['tabId', 'ts']);
-        ev.createIndex('by-ts', 'ts');
-        const rr = d.createObjectStore('rrweb', { keyPath: 'key' });
-        rr.createIndex('by-tab-ts', ['tabId', 'ts']);
-        rr.createIndex('by-ts', 'ts');
-        const inc = d.createObjectStore('incidents', { keyPath: 'incidentId' });
-        inc.createIndex('by-created', 'createdAt');
-        const bl = d.createObjectStore('blobs', { keyPath: 'id' });
-        bl.createIndex('by-incident', 'incidentId');
+    dbPromise = openDB<TLSchema>('testlens', 2, {
+      upgrade(d, oldVersion) {
+        if (oldVersion < 1) {
+          const ev = d.createObjectStore('events', { keyPath: 'key' });
+          ev.createIndex('by-tab-ts', ['tabId', 'ts']);
+          ev.createIndex('by-ts', 'ts');
+          const rr = d.createObjectStore('rrweb', { keyPath: 'key' });
+          rr.createIndex('by-tab-ts', ['tabId', 'ts']);
+          rr.createIndex('by-ts', 'ts');
+          const inc = d.createObjectStore('incidents', { keyPath: 'incidentId' });
+          inc.createIndex('by-created', 'createdAt');
+          const bl = d.createObjectStore('blobs', { keyPath: 'id' });
+          bl.createIndex('by-incident', 'incidentId');
+        }
+        if (oldVersion < 2) {
+          const v = d.createObjectStore('video', { keyPath: 'key' });
+          v.createIndex('by-tab-start', ['tabId', 'start']);
+          v.createIndex('by-end', 'end');
+        }
       },
     });
   }
   return dbPromise;
+}
+
+// ---------------------------------------------------------------------------
+// Video segments (written by the offscreen recorder, read at incident time)
+// ---------------------------------------------------------------------------
+
+export async function putVideoSegment(seg: VideoSegment) {
+  const d = await db();
+  await d.put('video', seg);
+}
+
+/** Segments overlapping [start, end], oldest first. */
+export async function readVideoSegments(tabId: number, start: number, end: number): Promise<VideoSegment[]> {
+  const d = await db();
+  const rows = await d.getAllFromIndex('video', 'by-tab-start', IDBKeyRange.bound([tabId, 0], [tabId, end]));
+  return rows.filter((r) => r.end >= start).sort((a, b) => a.start - b.start);
+}
+
+export async function expireVideo(olderThanEnd: number) {
+  const d = await db();
+  const tx = d.transaction('video', 'readwrite');
+  let cursor = await tx.store.index('by-end').openCursor(IDBKeyRange.upperBound(olderThanEnd));
+  while (cursor) {
+    void cursor.delete();
+    cursor = await cursor.continue();
+  }
+  await tx.done;
+}
+
+export async function clearTabVideo(tabId: number) {
+  const d = await db();
+  const tx = d.transaction('video', 'readwrite');
+  let cursor = await tx.store.index('by-tab-start').openCursor(IDBKeyRange.bound([tabId, 0], [tabId, Number.MAX_SAFE_INTEGER]));
+  while (cursor) {
+    void cursor.delete();
+    cursor = await cursor.continue();
+  }
+  await tx.done;
 }
 
 // ---------------------------------------------------------------------------
@@ -255,6 +311,7 @@ export async function expire(olderThan: number, maxPerTab = 6000) {
 
 export async function clearTab(tabId: number) {
   await flush();
+  await clearTabVideo(tabId);
   const d = await db();
   for (const store of ['events', 'rrweb'] as const) {
     const tx = d.transaction(store, 'readwrite');

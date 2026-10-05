@@ -20,7 +20,7 @@ export default defineConfig({
     // No global side_panel.default_path: the panel is enabled per tab (chrome.sidePanel.setOptions)
     // so it only appears on the tab where the tester opened TestLens, never in other windows.
     options_ui: { page: 'options.html', open_in_tab: true },
-    permissions: ['storage', 'unlimitedStorage', 'tabs', 'webRequest', 'scripting', 'alarms', 'sidePanel', 'activeTab', 'webNavigation'],
+    permissions: ['storage', 'unlimitedStorage', 'tabs', 'webRequest', 'scripting', 'alarms', 'sidePanel', 'activeTab', 'webNavigation', 'tabCapture', 'offscreen'],
     // Host access is requested at runtime, per origin the tester chooses to monitor (plus the Jira site).
     optional_host_permissions: ['<all_urls>'],
   },

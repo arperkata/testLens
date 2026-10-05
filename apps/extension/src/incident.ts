@@ -7,10 +7,16 @@ import { normalizeBrowserIncident, type RawBrowserIncident } from '@testlens/con
 import { DEFAULT_RULES, RULES_VERSION, mergeRules, redactContext } from '@testlens/redaction';
 import { buildConsoleLog, buildHar, buildNetworkLog, runEvidenceEngine, selectedExchangeIds, DEFAULT_ENGINE_OPTIONS } from '@testlens/evidence-engine';
 import { compose, withEvidenceIndex } from '@testlens/composer';
-import { getBlob, getIncident, putBlob, putIncident, readRrweb, readWindow, type StoredIncident } from './buffer/db';
+import { getBlob, getIncident, putBlob, putIncident, readRrweb, readVideoSegments, readWindow, type StoredIncident } from './buffer/db';
 import { loadSettings, type Settings } from './settings';
 import type { IncidentPatch, PageInfo } from './messages';
 import { renderViewerHtml } from './viewer-template';
+import { flushRecording } from './recording';
+
+function hhmmss(ts: number) {
+  const d = new Date(ts);
+  return `${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
+}
 
 const pageInfo = new Map<number, PageInfo>();
 export function rememberPageInfo(tabId: number, info: PageInfo) {
@@ -71,6 +77,8 @@ export async function finalizeIncident(incidentId: string): Promise<StoredIncide
     const settings = await loadSettings();
     const start = inc.triggerAt - settings.preWindowMs;
     const end = inc.postUntil;
+    // seal the running video segment first so footage up to the end of the post-window is on disk
+    await flushRecording(inc.tabId);
     const win = await readWindow(inc.tabId, start, end);
     const rr = settings.domReplay ? await readRrweb(inc.tabId, start, end) : [];
     const info = await getPageInfo(inc.tabId);
@@ -78,6 +86,16 @@ export async function finalizeIncident(incidentId: string): Promise<StoredIncide
     const artifacts: Artifact[] = [];
     const shot = await getBlob(`${incidentId}:screenshot`);
     if (shot) artifacts.push(artifact(`${incidentId}:screenshot`, 'screenshot', 'screenshot.png', 'image/png', shot.size, 'not-applicable'));
+
+    // video segments overlapping the window become one artifact each (segments are independently playable)
+    const segments = await readVideoSegments(inc.tabId, start, end);
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i]!;
+      const id = `${incidentId}:video:${i + 1}`;
+      await putBlob(id, incidentId, seg.blob);
+      const name = `recording-${String(i + 1).padStart(2, '0')}_${hhmmss(seg.start)}-${hhmmss(seg.end)}.webm`;
+      artifacts.push(artifact(id, 'video', name, seg.mime || 'video/webm', seg.blob.size, 'unredacted', { start: seg.start, end: seg.end }));
+    }
     if (rr.length) {
       const rrBlob = new Blob([JSON.stringify(rr)], { type: 'application/json' });
       await putBlob(`${incidentId}:rrweb`, incidentId, rrBlob);

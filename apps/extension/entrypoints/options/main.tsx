@@ -174,7 +174,9 @@ function CaptureSection({ s, update, persist }: SectionProps) {
         <label className="inline"><input type="checkbox" checked={s.domReplay} onChange={(e) => update({ domReplay: e.target.checked })} /> DOM replay recording (rrweb)</label>
         <label className="inline"><input type="checkbox" checked={s.maskAllInputs} onChange={(e) => update({ maskAllInputs: e.target.checked })} /> Mask all input values in replay</label>
       </div>
-      <p className="muted">Video recording of the tab is planned for a later build; the DOM replay plus the screenshot at Report Issue cover the visual evidence in this version.</p>
+      <p className="muted">
+        <b>Tab video</b>: Chrome only allows video capture after a click on the TestLens icon, so use <b>Record this tab</b> in the popup once per tab you test. Recording then runs in the background in rolling 60-second segments until the tab closes; the segments covering the incident window are attached as <code>recording-NN.webm</code>. DOM replay and the screenshot are always captured regardless.
+      </p>
       <button onClick={() => persist()}>Save</button>
     </div>
   );

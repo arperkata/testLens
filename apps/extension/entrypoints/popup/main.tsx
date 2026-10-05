@@ -65,6 +65,28 @@ function Popup() {
     }
   };
 
+  /** One click per tab: Chrome only hands out a tab-capture stream in response to a toolbar click. */
+  const toggleRecording = async () => {
+    if (!tab?.id || !status) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      if (status.recording) {
+        await sendRuntime({ type: 'tl:stop-tab-recording', tabId: tab.id });
+      } else {
+        const streamId = await new Promise<string>((resolve, reject) =>
+          chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id! }, (id) => (chrome.runtime.lastError || !id ? reject(new Error(chrome.runtime.lastError?.message ?? 'No stream id')) : resolve(id))),
+        );
+        await sendRuntime({ type: 'tl:start-tab-recording', tabId: tab.id, streamId });
+      }
+      setStatus(await sendRuntime<TabStatus>({ type: 'tl:get-tab-status', tabId: tab.id }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const openPanel = async () => {
     if (tab?.id !== undefined) {
       await sendRuntime({ type: 'tl:enable-panel', tabId: tab.id });
@@ -117,6 +139,16 @@ function Popup() {
               <span>{status.counts.interactions} actions</span>
               <span>{status.counts.rrwebChunks ? 'replay ✓' : 'replay –'}</span>
             </div>
+            {status.recordingSupported && (
+              <div className="row between" style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--line)' }}>
+                <span className={status.recording ? 'err' : 'muted'}>
+                  {status.recording ? `● Video recording this tab${status.recordingSince ? ` since ${new Date(status.recordingSince).toLocaleTimeString()}` : ''}` : 'Video: off (DOM replay + screenshot still captured)'}
+                </span>
+                <button className="small" onClick={toggleRecording} disabled={busy} title="Chrome needs one click per tab to allow video capture. Recording stays on until the tab closes.">
+                  {status.recording ? 'Stop video' : 'Record this tab'}
+                </button>
+              </div>
+            )}
           </div>
           <label>What went wrong? (optional)</label>
           <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Submitting the receipt form shows a spinner forever" />

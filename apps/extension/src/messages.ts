@@ -74,8 +74,42 @@ export type RuntimeRequest =
   | { type: 'tl:tracker-create'; incidentId: string }
   | { type: 'tl:set-tracker-target'; incidentId: string; target: import('./buffer/db').TrackerTarget | undefined; saveAsDefault?: boolean }
   | { type: 'tl:tracker-similar'; incidentId: string }
-  | { type: 'tl:start-tab-recording'; tabId: number }
-  | { type: 'tl:stop-tab-recording'; tabId: number };
+  | { type: 'tl:start-tab-recording'; tabId: number; streamId: string }
+  | { type: 'tl:stop-tab-recording'; tabId: number }
+  | { type: 'tl:recording-status' }
+  /** test hook: record a synthetic canvas stream for a tab (no tabCapture permission needed) */
+  | { type: 'tl:start-synthetic-recording'; tabId: number; options?: Partial<RecordingOptions> };
+
+/** Messages addressed to the offscreen recorder document (ignored by the background). */
+export type OffscreenRequest =
+  | { target: 'offscreen'; type: 'start'; tabId: number; streamId: string; options: RecordingOptions }
+  | { target: 'offscreen'; type: 'start-synthetic'; tabId: number; options: RecordingOptions }
+  | { target: 'offscreen'; type: 'stop'; tabId: number }
+  | { target: 'offscreen'; type: 'flush'; tabId: number }
+  | { target: 'offscreen'; type: 'status' };
+
+export interface RecordingOptions {
+  segmentMs: number;
+  overlapMs: number;
+  retainMs: number;
+  videoBitsPerSecond: number;
+  maxWidth: number;
+  maxHeight: number;
+  frameRate: number;
+}
+
+export const DEFAULT_RECORDING_OPTIONS: RecordingOptions = {
+  segmentMs: 60_000,
+  overlapMs: 4_000,
+  retainMs: 7 * 60_000,
+  videoBitsPerSecond: 600_000,
+  maxWidth: 1280,
+  maxHeight: 720,
+  frameRate: 10,
+};
+
+/** Offscreen → background notifications. */
+export type OffscreenEvent = { target: 'background'; type: 'recording-ended'; tabId: number; reason: string };
 
 export interface IncidentPatch {
   draft?: Partial<import('@testlens/schema').BugDraft>;
@@ -91,6 +125,7 @@ export interface TabStatus {
   counts: { exchanges: number; console: number; errors: number; interactions: number; navigation: number; rrwebChunks: number };
   oldestTs?: number;
   recording: boolean;
+  recordingSince?: number;
   recordingSupported: boolean;
 }
 

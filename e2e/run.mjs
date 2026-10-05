@@ -133,6 +133,15 @@ try {
   const app = context.pages()[0] ?? (await context.newPage());
   await app.goto(APP + '/');
   await app.waitForTimeout(800);
+
+  // Rolling video: tabCapture needs a toolbar click Playwright cannot perform, so exercise the
+  // recorder pipeline with its synthetic canvas source (short segments to keep the run fast).
+  const appTabId = await cfgPage.evaluate(async ({ APP }) => (await chrome.tabs.query({ url: `${APP}/*` }))[0].id, { APP });
+  const recStart = await cfgPage.evaluate((tabId) => chrome.runtime.sendMessage({ type: 'tl:start-synthetic-recording', tabId, options: { segmentMs: 3000, overlapMs: 500 } }), appTabId);
+  check(recStart.ok, `synthetic tab recording started (${recStart.ok ? 'ok' : recStart.error})`);
+  await app.waitForTimeout(3500);
+  const recStatus = await cfgPage.evaluate((tabId) => chrome.runtime.sendMessage({ type: 'tl:get-tab-status', tabId }), appTabId);
+  check(recStatus.data.recording === true, 'tab status reports recording');
   await app.click('#ok');
   await app.waitForTimeout(300);
   await app.fill('#amount', '99');
@@ -198,6 +207,10 @@ try {
     check(kinds.includes('screenshot'), 'screenshot artifact');
     check(kinds.includes('rrweb'), 'rrweb artifact');
     check(kinds.includes('har-focused') && kinds.includes('console-log') && kinds.includes('incident-viewer'), `text artifacts (${kinds.join(',')})`);
+    const vids = ctx.artifacts.filter((a) => a.kind === 'video');
+    check(vids.length >= 1, `video segments attached (${vids.length}: ${vids.map((v) => `${v.fileName} ${Math.round(v.bytes / 1024)}KB`).join(', ')})`);
+    check(vids.every((v) => v.bytes > 1000 && v.mime.startsWith('video/webm')), 'video segments are non-empty WebM files');
+    check(!ctx.evidence.captureQuality.notes.some((n) => n.includes('no pixel video')), 'capture quality no longer reports missing video');
     check(ctx.evidence?.observations.some((o) => o.includes('succeeded 2 time(s)')), 'success-then-fail observation');
     check(ctx.evidence?.items.some((i) => i.kind === 'interaction' && i.reasons.join().includes('likely cause')), 'click→request causality detected');
     console.log('  summary:', draft.summary);
@@ -235,6 +248,12 @@ try {
     const detailText = await panel.textContent('body');
     check(detailText.includes('Request payload') && detailText.includes('Response body'), 'evidence tab shows request/response detail');
     check((await panel.locator('mark').count()) > 0, 'correlation id highlighted in detail view');
+  }
+  const videoEls = panel.locator('video');
+  check((await videoEls.count()) >= 1, `evidence tab shows video player(s) (${await videoEls.count()})`);
+  if (await videoEls.count()) {
+    const playable = await videoEls.first().evaluate((v) => new Promise((resolve) => { const el = v; if (el.readyState >= 1) return resolve(true); el.onloadedmetadata = () => resolve(true); el.onerror = () => resolve(false); setTimeout(() => resolve(el.readyState >= 1), 5000); }));
+    check(playable === true, 'first video segment loads metadata (decodable WebM)');
   }
   await panel.screenshot({ path: path.join(outDir, 'sidepanel-evidence.png'), fullPage: true });
   // Jira tab: destination comes from settings and can be changed per incident

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import '../../src/ui/base.css';
 import type { BugContext, BugDraft, EvidenceItem, FocalEvent } from '@testlens/schema';
-import type { StoredIncident } from '../../src/buffer/db';
+import { getBlob, type StoredIncident } from '../../src/buffer/db';
 import type { TrackerPreview } from '../../src/tracker';
 import { sendRuntime } from '../../src/messages';
 import { loadSettings } from '../../src/settings';
@@ -303,12 +303,21 @@ function BugTab({ ctx, draft, incident, onPatch, onRerun }: { ctx: BugContext; d
 
 function EvidenceTab({ ctx, incident, onPatch }: { ctx: BugContext; incident: Incident; onPatch: (p: import('../../src/messages').IncidentPatch) => void }) {
   const [shot, setShot] = useState<string>();
+  const [videos, setVideos] = useState<{ id: string; name: string; url: string; range?: { start: number; end: number } }[]>([]);
   const [showAll, setShowAll] = useState(false);
   const [expanded, setExpanded] = useState<string>();
   useEffect(() => {
     const a = ctx.artifacts.find((x) => x.kind === 'screenshot');
-    if (!a) return;
-    void sendRuntime<{ dataUrl: string } | undefined>({ type: 'tl:get-blob', blobId: a.storage.ref }).then((b) => setShot(b?.dataUrl));
+    if (a) void sendRuntime<{ dataUrl: string } | undefined>({ type: 'tl:get-blob', blobId: a.storage.ref }).then((b) => setShot(b?.dataUrl));
+    // video segments are read straight from IndexedDB (same extension origin) to avoid base64 round-trips of large blobs
+    const vids = ctx.artifacts.filter((x) => x.kind === 'video');
+    let urls: string[] = [];
+    void Promise.all(vids.map(async (v) => ({ v, blob: await getBlob(v.storage.ref) }))).then((rows) => {
+      const out = rows.filter((r) => r.blob).map((r) => ({ id: r.v.id, name: r.v.fileName, url: URL.createObjectURL(r.blob!), range: r.v.timeRange }));
+      urls = out.map((o) => o.url);
+      setVideos(out);
+    });
+    return () => urls.forEach((u) => URL.revokeObjectURL(u));
   }, [ctx.artifacts]);
 
   const items = ctx.evidence?.items ?? [];
@@ -379,6 +388,20 @@ function EvidenceTab({ ctx, incident, onPatch }: { ctx: BugContext; incident: In
         ))}
       </div>
       {shot && <img className="shot" src={shot} alt="screenshot" style={{ marginTop: 8 }} />}
+      {videos.length > 0 && (
+        <>
+          <h2>Tab recording ({videos.length} segment{videos.length > 1 ? 's' : ''})</h2>
+          {videos.map((v) => (
+            <div key={v.id} style={{ marginBottom: 8 }}>
+              <div className="muted mono" style={{ fontSize: 11 }}>
+                {v.name}
+                {v.range ? ` · ${rel(v.range.start, ctx.trigger.at)} → ${rel(v.range.end, ctx.trigger.at)}` : ''}
+              </div>
+              <video controls preload="metadata" src={v.url} style={{ width: '100%', borderRadius: 6, border: '1px solid var(--line)', background: '#000' }} />
+            </div>
+          ))}
+        </>
+      )}
       {incident.context?.redaction.counts && Object.keys(incident.context.redaction.counts).length > 0 && (
         <p className="muted">
           Redacted {Object.values(incident.context.redaction.counts).reduce((a, b) => a + b, 0)} value(s): {Object.entries(incident.context.redaction.counts).slice(0, 6).map(([k, v]) => `${k}×${v}`).join(', ')}
