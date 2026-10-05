@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import '../../src/ui/base.css';
-import type { FieldSchema, IssueTypeRef, ProjectRef, TrackerDescriptor } from '@testlens/trackers-core';
+import { resolveTokenHelpUrl, type FieldSchema, type IssueTypeRef, type ProjectRef, type TrackerDescriptor } from '@testlens/trackers-core';
 import { sendRuntime } from '../../src/messages';
 import { ARTIFACT_KIND_LABELS, DEFAULT_SETTINGS, describeEntry, exportSettings, importSettings, loadSettings, normalizeOriginInput, originsToMatchPatterns, saveSettings, type Settings, type TrackerSettings } from '../../src/settings';
 import { buildMappingFields, optionalFieldsWithValues, requiredFields, stringValues, withDefaults } from '../../src/jira-mapping';
@@ -367,19 +367,33 @@ function TrackerSection({ s, update, persist, setMsg }: SectionProps) {
         ))}
         {!descriptors.length && <option value={t.trackerId}>{t.trackerId}</option>}
       </select>
+      {d && <p className="muted">{d.blurb} Credentials are stored only in this browser profile; the token never syncs.</p>}
+
       {d && (
-        <p className="muted">
-          {d.blurb}
-          {d.tokenHelpUrl && (
-            <>
-              {' '}
-              <a href={d.tokenHelpUrl} target="_blank" rel="noreferrer">Create a token</a>.
-            </>
-          )}{' '}
-          Credentials are stored only in this browser profile; the token never syncs.
-        </p>
+        <div className="card" style={{ background: 'var(--panel2)', marginTop: 8 }}>
+          <div className="row between">
+            <b>Step 1 — get your {d.authFields.find((f) => f.key === 'secret')?.label.replace(/\s*\(.*\)$/, '') ?? 'token'}</b>
+            {(() => {
+              const url = resolveTokenHelpUrl(d, t.baseUrl);
+              const needsUrl = Boolean(d.tokenHelpUrl?.includes('{baseUrl}')) && !url;
+              return (
+                <button className="primary small" disabled={!url} title={needsUrl ? `Enter the ${d.authFields.find((f) => f.key === 'baseUrl')?.label ?? 'URL'} first` : url} onClick={() => url && chrome.tabs.create({ url })}>
+                  {needsUrl ? 'Enter the URL first' : `Open ${d.displayName} token page ↗`}
+                </button>
+              );
+            })()}
+          </div>
+          {d.tokenSteps && (
+            <ol style={{ margin: '6px 0 0 18px', padding: 0 }} className="muted">
+              {d.tokenSteps.map((s, i) => (
+                <li key={i}>{s}</li>
+              ))}
+            </ol>
+          )}
+        </div>
       )}
 
+      <h3 style={{ marginBottom: 0 }}>Step 2 — enter the connection details</h3>
       <div className="row" style={{ gap: 12 }}>
         {(d?.authFields ?? []).map((f) => (
           <div key={f.key} style={{ flex: f.key === 'secret' ? 3 : 2, minWidth: 220 }}>
@@ -395,9 +409,11 @@ function TrackerSection({ s, update, persist, setMsg }: SectionProps) {
           </div>
         ))}
       </div>
-      <div className="row" style={{ marginTop: 10 }}>
+      <h3 style={{ marginBottom: 0 }}>Step 3 — connect</h3>
+      <div className="row" style={{ marginTop: 6 }}>
         <button className="primary" onClick={connect} disabled={testing || !authReady}>{testing ? 'Connecting…' : `Connect & load ${d?.containerLabel.toLowerCase() ?? 'project'}s`}</button>
         {who && <span className="ok">Connected as {who}</span>}
+        {!authReady && !who && <span className="muted">Fill the fields above to enable</span>}
       </div>
 
       {(projects || t.projectKey) && (

@@ -22,8 +22,13 @@ export interface TrackerDescriptor {
   /** Shown under the tracker name in settings. */
   blurb: string;
   authFields: AuthFieldSpec[];
-  /** Where the user creates the token/key. */
+  /**
+   * Where the user creates the token/key. May contain `{baseUrl}` for self-hosted tools,
+   * resolved from the connection URL the user entered.
+   */
   tokenHelpUrl?: string;
+  /** Short numbered instructions shown next to the button, in the tool's own words. */
+  tokenSteps?: string[];
   /** What this tracker calls the container issues live in. */
   containerLabel: string; // 'Project' | 'Repository' | 'Team'
   /** What this tracker calls the kind of item. */
@@ -144,6 +149,24 @@ export interface ITrackerAdapter<TDoc = unknown> {
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Resolve a descriptor's token page for the user's instance. Returns undefined when the page
+ * lives on a self-hosted instance whose URL has not been entered yet.
+ */
+export function resolveTokenHelpUrl(d: TrackerDescriptor, baseUrl: string | undefined): string | undefined {
+  if (!d.tokenHelpUrl) return undefined;
+  if (!d.tokenHelpUrl.includes('{baseUrl}')) return d.tokenHelpUrl;
+  const b = (baseUrl ?? '').trim().replace(/\/+$/, '');
+  if (!b) return undefined;
+  try {
+    const u = new URL(b);
+    // Azure DevOps Services tokens live on dev.azure.com/{org}; Server keeps them per collection.
+    return d.tokenHelpUrl.replace('{baseUrl}', `${u.origin}${u.pathname.replace(/\/+$/, '')}`);
+  } catch {
+    return undefined;
+  }
+}
 
 /** Minimal mustache-style template: {{draft.summary}} */
 export function renderTemplate(tpl: string, scope: Record<string, unknown>): string {

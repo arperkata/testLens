@@ -91,6 +91,7 @@ export const JIRA_CLOUD_DESCRIPTOR: TrackerDescriptor = {
     { key: 'secret', label: 'API token', type: 'password', help: 'Create one at id.atlassian.com → Security → API tokens' },
   ],
   tokenHelpUrl: 'https://id.atlassian.com/manage-profile/security/api-tokens',
+  tokenSteps: ['Sign in with the Atlassian account you use for Jira', 'Click "Create API token", name it TestLens', 'Copy the token now; Atlassian shows it only once', 'Paste it below with the same email address'],
   containerLabel: 'Project',
   typeLabel: 'Issue type',
   attachments: 'native',

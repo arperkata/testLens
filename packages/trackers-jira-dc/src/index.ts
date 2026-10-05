@@ -16,6 +16,8 @@ export const JIRA_DC_DESCRIPTOR: TrackerDescriptor = {
     { key: 'email', label: 'Username (only for password auth)', placeholder: 'leave empty when using a PAT' },
     { key: 'secret', label: 'Personal access token (or password)', type: 'password', help: 'Profile → Personal Access Tokens → Create token' },
   ],
+  tokenHelpUrl: '{baseUrl}/secure/ViewProfile.jspa?selectedTab=com.atlassian.pats.pats-plugin:jira-user-personal-access-tokens',
+  tokenSteps: ['Enter your Jira base URL above, then open the token page', 'Profile → Personal Access Tokens → "Create token"', 'Copy the token; it is shown only once', 'Paste it below (leave Username empty when using a PAT)'],
   containerLabel: 'Project',
   typeLabel: 'Issue type',
   attachments: 'native',

@@ -29,6 +29,7 @@ export const LINEAR_DESCRIPTOR: TrackerDescriptor = {
     { key: 'secret', label: 'Personal API key', type: 'password', help: 'Settings → Security & access → Personal API keys' },
   ],
   tokenHelpUrl: 'https://linear.app/settings/account/security',
+  tokenSteps: ['Settings → Security & access → Personal API keys', '"Create key", label it TestLens', 'Copy the key; paste it below'],
   containerLabel: 'Team',
   typeLabel: 'Type',
   attachments: 'native',
