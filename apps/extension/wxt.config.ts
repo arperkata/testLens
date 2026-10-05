@@ -13,6 +13,9 @@ export default defineConfig({
     description: 'Testing flight recorder: when something goes wrong, TestLens already has the evidence. Review, then create the Jira issue.',
     version: '0.1.0',
     minimum_chrome_version: '116',
+    // One background, one configuration and one recorder for normal and Incognito windows
+    // (the user still has to tick "Allow in Incognito" once on chrome://extensions).
+    incognito: 'spanning',
     action: { default_title: 'TestLens — Report Issue' },
     // No global side_panel.default_path: the panel is enabled per tab (chrome.sidePanel.setOptions)
     // so it only appears on the tab where the tester opened TestLens, never in other windows.

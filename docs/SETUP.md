@@ -89,24 +89,28 @@ Open settings at any time from the popup's **Settings** button or by right-click
 
 ### 4.1 Monitored sites
 
-TestLens records only the origins you list here. Nothing is captured on any other site.
+TestLens records only the sites you list here. Nothing is captured anywhere else.
 
-1. Enter the origin of the application under test, for example `https://app.example.com`, and click **Add**.
-2. If the application calls APIs on another origin (for example `https://api.example.com`), add that too. Without it, requests to that origin are seen without headers or bodies.
-3. Optionally give each origin an **app name**; it appears in the bug's Environment section.
+Monitoring is **domain-wide**. Entering `app.example.com` monitors `example.com` and every subdomain (`api.example.com`, `auth.example.com`…), over http and https, on any port. One entry therefore normally covers the application and the APIs it calls. `localhost` and IP addresses are kept exact because no domain can be derived from them.
+
+1. Enter the application under test (`app.example.com`, a full URL, or `*.example.com`) and click **Add**. TestLens shows the resulting scope under the entry.
+2. If the application calls APIs on a different domain (not just a different subdomain), add that domain too.
+3. Optionally give each entry an **app name**; it appears in the bug's Environment section.
 4. Set **Environment name** (QA, Staging, INT…). It is added as a label and shown in every bug.
-5. Click **Apply monitoring** and accept the browser permission prompt listing those origins.
+5. Click **Apply monitoring** and accept the browser permission prompt.
 6. Reload any open tab of the application so the recorder attaches.
-
-Patterns:
 
 | Entry | Meaning |
 |---|---|
-| `https://app.example.com` | that origin only (all ports) |
-| `*.example.com` | every subdomain, http and https |
+| `*.example.com` (what `app.example.com` becomes) | example.com and all subdomains, http and https, any port |
+| `http://localhost:4317` | that exact origin only |
 | `*` | every site. Not recommended; use only on a dedicated test browser profile |
 
-Monitoring status is shown in the popup: a green dot with live counts means the buffer is active for the current tab.
+**Configure once per browser.** Settings are stored in Chrome's synced storage, so they apply to every window of this browser profile and follow a signed-in Chrome profile to other machines. The Jira API token is kept in local storage only and never syncs. Use **Export settings** / **Import settings** to share a configuration file with the team; the export contains no token.
+
+**Incognito windows.** TestLens is built to share one configuration and one recorder between normal and Incognito windows, but Chrome requires the user to allow it once: the Monitored sites card shows whether Incognito is allowed and offers **Open extension details**, where you turn on **Allow in Incognito**. After that, Incognito tabs of monitored sites are recorded with no further setup. Incognito incidents are stored like any other and are purged by the same retention rule.
+
+Monitoring status is shown in the popup: a green dot with live counts means the buffer is active for the current tab. On an unmonitored site the popup offers **Monitor <domain>**, which adds the domain, requests permission and reloads the tab in one step.
 
 ### 4.2 Capture settings
 

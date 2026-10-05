@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import '../../src/ui/base.css';
 import type { FieldSchema, IssueTypeRef, ProjectRef } from '@testlens/trackers-core';
 import { sendRuntime } from '../../src/messages';
-import { DEFAULT_SETTINGS, loadSettings, normalizeOriginInput, originsToMatchPatterns, saveSettings, type Settings } from '../../src/settings';
+import { DEFAULT_SETTINGS, describeEntry, exportSettings, importSettings, loadSettings, normalizeOriginInput, originsToMatchPatterns, saveSettings, type Settings } from '../../src/settings';
 import { defaultMapping } from '../../src/jira';
 
 function Options() {
@@ -49,13 +49,16 @@ type SectionProps = { s: Settings; update: (p: Partial<Settings>) => void; persi
 function MonitoringSection({ s, update, persist, setMsg }: SectionProps) {
   const [input, setInput] = useState('');
   const [granted, setGranted] = useState<string[]>([]);
+  const [incognitoAllowed, setIncognitoAllowed] = useState<boolean>();
+  const fileRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     void chrome.permissions.getAll().then((p) => setGranted(p.origins ?? []));
+    chrome.extension.isAllowedIncognitoAccess((ok) => setIncognitoAllowed(ok));
   }, [s.monitoredOrigins]);
 
   const add = () => {
     const o = normalizeOriginInput(input);
-    if (!o) return setMsg?.({ kind: 'err', text: 'Enter an origin like https://app.example.com or *.example.com' });
+    if (!o) return setMsg?.({ kind: 'err', text: 'Enter a site like app.example.com, https://app.example.com or *.example.com' });
     if (!s.monitoredOrigins.includes(o)) update({ monitoredOrigins: [...s.monitoredOrigins, o] });
     setInput('');
   };
@@ -63,27 +66,52 @@ function MonitoringSection({ s, update, persist, setMsg }: SectionProps) {
     const patterns = originsToMatchPatterns(s.monitoredOrigins);
     if (patterns.length) {
       const ok = await chrome.permissions.request({ origins: patterns });
-      if (!ok) return setMsg?.({ kind: 'err', text: 'Permission not granted; monitoring not enabled for those origins' });
+      if (!ok) return setMsg?.({ kind: 'err', text: 'Permission not granted; monitoring not enabled for those sites' });
     }
     await persist({ ...s, onboarded: true });
     await sendRuntime({ type: 'tl:apply-monitoring' });
-    setMsg?.({ kind: 'ok', text: 'Monitoring applied. Reload open tabs of these sites to start capturing.' });
+    setMsg?.({ kind: 'ok', text: 'Monitoring applied to every window of this browser. Reload open tabs of these sites to start capturing.' });
   };
   const isGranted = (o: string) => granted.includes('<all_urls>') || originsToMatchPatterns([o]).every((p) => granted.includes(p));
+
+  const exportFile = () => {
+    const blob = new Blob([exportSettings(s)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'testlens-settings.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  const importFile = async (f: File | undefined) => {
+    if (!f) return;
+    try {
+      const next = importSettings(s, await f.text());
+      await persist(next);
+      await sendRuntime({ type: 'tl:apply-monitoring' });
+      setMsg?.({ kind: 'ok', text: 'Settings imported. Click Apply monitoring to grant site permissions, and enter the Jira token if needed.' });
+    } catch (e) {
+      setMsg?.({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    }
+  };
 
   return (
     <div className="card">
       <h2 style={{ marginTop: 0 }}>1. Monitored sites</h2>
-      <p className="muted">Add the application under test. If it calls APIs on a different origin (for example api.example.com), add that too so request bodies and headers are captured for it. Use “*.example.com” for all subdomains, or “*” to monitor everything (not recommended).</p>
+      <p className="muted">
+        Add the application under test. Monitoring is <b>domain-wide</b>: entering app.example.com covers example.com and every subdomain (api.example.com, auth.example.com…), http and https, any port. localhost and IP addresses are kept exact. Configure once; the same configuration applies to all normal windows and, once allowed, Incognito windows of this browser, and syncs with your signed-in Chrome profile.
+      </p>
       <div className="row">
-        <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="https://app.example.com" style={{ flex: 1 }} />
+        <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="app.example.com" style={{ flex: 1 }} />
         <button onClick={add}>Add</button>
       </div>
       <div className="list" style={{ marginTop: 8 }}>
         {s.monitoredOrigins.map((o) => (
           <div key={o} className="item">
-            <div className="body mono">
-              {o} {isGranted(o) ? <span className="badge ok">permission granted</span> : <span className="badge err">permission pending — click Apply</span>}
+            <div className="body">
+              <div className="mono">
+                {o.replace(/^\*\./, '')} {isGranted(o) ? <span className="badge ok">permission granted</span> : <span className="badge err">permission pending — click Apply</span>}
+              </div>
+              <div className="reasons">{describeEntry(o)}</div>
             </div>
             <input placeholder="app name (optional)" style={{ width: 180 }} value={s.appNames[o] ?? ''} onChange={(e) => update({ appNames: { ...s.appNames, [o]: e.target.value } })} />
             <button className="small danger" onClick={() => update({ monitoredOrigins: s.monitoredOrigins.filter((x) => x !== o) })}>remove</button>
@@ -95,6 +123,28 @@ function MonitoringSection({ s, update, persist, setMsg }: SectionProps) {
       <input value={s.environmentName} onChange={(e) => update({ environmentName: e.target.value })} style={{ maxWidth: 240 }} />
       <div className="row" style={{ marginTop: 12 }}>
         <button className="primary" onClick={apply}>Apply monitoring</button>
+        <button onClick={exportFile}>Export settings</button>
+        <button onClick={() => fileRef.current?.click()}>Import settings</button>
+        <input ref={fileRef} type="file" accept="application/json" style={{ display: 'none' }} onChange={(e) => void importFile(e.target.files?.[0])} />
+      </div>
+
+      <div className="card" style={{ marginTop: 12, background: 'var(--panel2)' }}>
+        <div className="row between">
+          <span>
+            <b>Incognito windows</b>{' '}
+            {incognitoAllowed === undefined ? null : incognitoAllowed ? <span className="badge ok">allowed — same configuration applies</span> : <span className="badge err">not allowed yet</span>}
+          </span>
+          {incognitoAllowed === false && (
+            <button className="small" onClick={() => chrome.tabs.create({ url: `chrome://extensions/?id=${chrome.runtime.id}` })}>
+              Open extension details
+            </button>
+          )}
+        </div>
+        {incognitoAllowed === false && (
+          <p className="muted" style={{ marginBottom: 0 }}>
+            Chrome does not let extensions enable this themselves. On the extension details page turn on <b>Allow in Incognito</b> once. TestLens then uses the same sites, Jira connection and recorder in Incognito; no reconfiguration.
+          </p>
+        )}
       </div>
     </div>
   );

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import '../../src/ui/base.css';
 import { sendRuntime, type TabStatus } from '../../src/messages';
-import { loadSettings, normalizeOriginInput, saveSettings } from '../../src/settings';
+import { describeEntry, loadSettings, normalizeOriginInput, saveSettings } from '../../src/settings';
 
 function Popup() {
   const [tab, setTab] = useState<chrome.tabs.Tab>();
@@ -84,9 +84,11 @@ function Popup() {
       {!unsupported && status && !status.monitored && (
         <div className="card">
           <p>This site is not monitored yet.</p>
-          <p className="muted">TestLens only records sites you choose. Add this site to start the rolling 5-minute buffer. If the app calls an API on another origin, add that origin too in Settings.</p>
+          <p className="muted">
+            TestLens only records sites you choose. Monitoring is domain-wide, so {tab?.url ? describeEntry(normalizeOriginInput(tab.url) ?? '') : 'the whole domain'} will be covered, including its API subdomains. Configure once; it applies to every window of this browser.
+          </p>
           <button className="primary" onClick={monitorThisSite} disabled={busy}>
-            Monitor this site
+            Monitor {tab?.url ? (normalizeOriginInput(tab.url) ?? '').replace(/^\*\./, '') : 'this site'}
           </button>
         </div>
       )}
