@@ -24,12 +24,23 @@ export interface RrwebChunk {
 
 export type IncidentStatus = 'collecting' | 'ready' | 'created' | 'error';
 
-export interface JiraTarget {
+export interface TrackerTarget {
+  trackerId: string;
   projectKey: string;
+  projectName?: string;
   issueTypeId: string;
   issueTypeName?: string;
-  /** Mapping fields for this incident (same shape as settings.jira.mapping.fields). */
+  /** Mapping fields for this incident (same shape as settings.tracker.mapping.fields). */
   fields: Record<string, unknown>;
+}
+/** @deprecated use TrackerTarget */
+export type JiraTarget = TrackerTarget;
+
+export interface CreatedIssue {
+  trackerId: string;
+  key: string;
+  url: string;
+  attachments: { fileName: string; ok: boolean; error?: string }[];
 }
 
 export interface StoredIncident {
@@ -45,9 +56,12 @@ export interface StoredIncident {
   tab: { url: string; title: string; windowId: number };
   context?: BugContext;
   draft?: BugDraft;
+  /** Result of a successful create (any tracker). */
+  created?: CreatedIssue;
+  /** @deprecated legacy field from Jira-only builds; read as fallback for `created`. */
   jira?: { key: string; url: string; attachments: { fileName: string; ok: boolean; error?: string }[] };
-  /** Per-incident Jira destination chosen in the side panel; falls back to settings when absent. */
-  jiraTarget?: JiraTarget;
+  /** Per-incident destination chosen in the side panel; falls back to settings when absent. */
+  jiraTarget?: TrackerTarget;
   similar?: { key: string; summary: string; url: string; status: string }[];
 }
 

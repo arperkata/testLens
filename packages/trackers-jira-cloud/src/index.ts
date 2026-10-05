@@ -1,11 +1,8 @@
 /**
  * @testlens/trackers-jira-cloud — Jira Cloud (REST v3, ADF) adapter.
- *
- * Runs inside the extension (host permission for the Jira origin bypasses CORS)
- * or inside a Hub. Uses only `fetch`.
  */
 import type { Artifact, BugDraft, BugDraftSection } from '@testlens/schema';
-import { TrackerError, renderTemplate } from '@testlens/trackers-core';
+import { TrackerError, resolveMappedValue, safeText, sanitizeLabels, searchNeedle, validateRequired } from '@testlens/trackers-core';
 import type {
   AttachmentResult,
   AuthSession,
@@ -14,7 +11,9 @@ import type {
   ITrackerAdapter,
   IssueTypeRef,
   ProjectRef,
+  SimilarIssue,
   TrackerAuthConfig,
+  TrackerDescriptor,
   TrackerLimits,
   TrackerMapping,
   ValidationResult,
@@ -35,7 +34,6 @@ const bulletList = (items: string[]): AdfNode => ({ type: 'bulletList', content:
 const orderedList = (items: string[]): AdfNode => ({ type: 'orderedList', content: items.map((i) => ({ type: 'listItem', content: [paragraphWithLinks(i)] })) });
 const panel = (type: 'info' | 'note' | 'warning' | 'success' | 'error', nodes: AdfNode[]): AdfNode => ({ type: 'panel', attrs: { panelType: type }, content: nodes });
 
-/** Turns bare URLs in a line into link marks. */
 function paragraphWithLinks(line: string): AdfNode {
   const parts = line.split(/(https?:\/\/[^\s)]+)/g).filter(Boolean);
   return paragraph(...parts.map((p) => (/^https?:\/\//.test(p) ? text(p, [{ type: 'link', attrs: { href: p } }]) : text(p))));
@@ -43,9 +41,8 @@ function paragraphWithLinks(line: string): AdfNode {
 
 function sectionToAdf(s: BugDraftSection): AdfNode[] {
   const nodes: AdfNode[] = [heading(3, s.title)];
-  if (s.code) {
-    nodes.push(codeBlock(s.body, s.id === 'curl' ? 'bash' : 'text'));
-  } else {
+  if (s.code) nodes.push(codeBlock(s.body, s.id === 'curl' ? 'bash' : 'text'));
+  else {
     const lines = s.body.split('\n').filter((l) => l.trim().length);
     const bullets = lines.filter((l) => l.startsWith('• '));
     if (bullets.length === lines.length && lines.length) nodes.push(bulletList(bullets.map((b) => b.slice(2))));
@@ -63,7 +60,6 @@ export function renderAdf(draft: BugDraft, maxChars = 30_000): AdfDoc {
   content.push(paragraphWithLinks(draft.expectedResult));
   content.push(heading(3, 'Actual result'));
   content.push(paragraphWithLinks(draft.actualResult));
-
   let used = JSON.stringify(content).length;
   const deferred: string[] = [];
   for (const s of draft.sections) {
@@ -85,9 +81,26 @@ export function renderAdf(draft: BugDraft, maxChars = 30_000): AdfDoc {
 // Adapter
 // ---------------------------------------------------------------------------
 
-export class JiraCloudAdapter implements ITrackerAdapter<AdfDoc> {
-  readonly id = 'jira-cloud';
-  readonly displayName = 'Jira Cloud';
+export const JIRA_CLOUD_DESCRIPTOR: TrackerDescriptor = {
+  id: 'jira-cloud',
+  displayName: 'Jira Cloud',
+  blurb: 'Atlassian-hosted Jira (yourcompany.atlassian.net). Uses your own API token; issues are created as you.',
+  authFields: [
+    { key: 'baseUrl', label: 'Jira site URL', placeholder: 'https://yourcompany.atlassian.net', type: 'url' },
+    { key: 'email', label: 'Email', placeholder: 'you@company.com' },
+    { key: 'secret', label: 'API token', type: 'password', help: 'Create one at id.atlassian.com → Security → API tokens' },
+  ],
+  tokenHelpUrl: 'https://id.atlassian.com/manage-profile/security/api-tokens',
+  containerLabel: 'Project',
+  typeLabel: 'Issue type',
+  attachments: 'native',
+  authMethod: 'basic',
+};
+
+export class JiraCloudAdapter implements ITrackerAdapter {
+  readonly id: string = 'jira-cloud';
+  readonly displayName: string = 'Jira Cloud';
+  readonly descriptor: TrackerDescriptor = JIRA_CLOUD_DESCRIPTOR;
 
   async authenticate(cfg: TrackerAuthConfig): Promise<AuthSession> {
     const baseUrl = cfg.baseUrl.replace(/\/+$/, '');
@@ -95,9 +108,7 @@ export class JiraCloudAdapter implements ITrackerAdapter<AdfDoc> {
     if (cfg.method === 'basic') {
       if (!cfg.email) throw new TrackerError('Email is required for Jira Cloud API token authentication');
       headers.Authorization = `Basic ${btoa(`${cfg.email}:${cfg.secret}`)}`;
-    } else if (cfg.method === 'pat' || cfg.method === 'oauth') {
-      headers.Authorization = `Bearer ${cfg.secret}`;
-    }
+    } else headers.Authorization = `Bearer ${cfg.secret}`;
     const me = await this.json<{ accountId: string; displayName: string }>({ baseUrl, headers }, 'GET', '/rest/api/3/myself');
     return { baseUrl, headers, accountId: me.accountId, displayName: me.displayName };
   }
@@ -134,26 +145,17 @@ export class JiraCloudAdapter implements ITrackerAdapter<AdfDoc> {
     }));
   }
 
-  renderDescription(draft: BugDraft): AdfDoc {
+  /** ADF on Cloud; subclasses may return another document type (wiki markup on Server/DC). */
+  renderDescription(draft: BugDraft): unknown {
     return renderAdf(draft);
   }
 
   validate(draft: BugDraft, mapping: TrackerMapping, fields: FieldSchema[]): ValidationResult {
-    const problems: { field: string; message: string }[] = [];
-    if (!draft.summary.trim()) problems.push({ field: 'summary', message: 'Summary is empty' });
-    if (draft.summary.length > 255) problems.push({ field: 'summary', message: 'Summary exceeds 255 characters' });
     const payload = this.buildPayload(draft, mapping, fields) as { fields: Record<string, unknown> };
-    for (const f of fields) {
-      if (!f.required || f.hasDefault) continue;
-      if (['project', 'issuetype', 'reporter'].includes(f.key)) continue;
-      const v = payload.fields[f.key];
-      if (v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0)) problems.push({ field: f.key, message: `Required field "${f.name}" has no value — set it in the Jira mapping` });
-    }
-    return { ok: problems.length === 0, problems };
+    return validateRequired(draft, payload.fields, fields, ['project', 'issuetype', 'reporter']);
   }
 
   buildPayload(draft: BugDraft, mapping: TrackerMapping, fields: FieldSchema[]): unknown {
-    const scope = { draft };
     const out: Record<string, unknown> = {
       project: { key: mapping.projectKey },
       issuetype: { id: mapping.issueTypeId },
@@ -162,31 +164,25 @@ export class JiraCloudAdapter implements ITrackerAdapter<AdfDoc> {
     };
     const byKey = new Map(fields.map((f) => [f.key, f]));
     for (const [key, raw] of Object.entries(mapping.fields)) {
-      const schema = byKey.get(key);
-      const v = resolveMappedValue(raw, draft, scope, schema);
-      if (v !== undefined) out[key] = v;
+      const v = resolveMappedValue(raw, draft, byKey.get(key), () => this.renderDescription(draft));
+      if (v !== undefined) out[key] = toJiraValue(v, byKey.get(key));
     }
-    // labels: Jira forbids spaces
-    if (Array.isArray(out.labels)) out.labels = (out.labels as string[]).map((l) => l.replace(/\s+/g, '-'));
+    if (out.labels) out.labels = sanitizeLabels(out.labels);
     return { fields: out };
   }
 
   async createIssue(s: AuthSession, payload: unknown): Promise<CreateResult> {
-    const res = await this.json<{ id: string; key: string; self: string }>(s, 'POST', '/rest/api/3/issue', payload);
+    const res = await this.json<{ id: string; key: string }>(s, 'POST', '/rest/api/3/issue', payload);
     return { id: res.id, key: res.key, url: `${s.baseUrl}/browse/${res.key}` };
   }
 
-  async attach(s: AuthSession, issueKey: string, files: { artifact: Artifact; blob: Blob }[]): Promise<AttachmentResult[]> {
+  async attach(s: AuthSession, created: CreateResult, files: { artifact: Artifact; blob: Blob }[]): Promise<AttachmentResult[]> {
     const results: AttachmentResult[] = [];
     for (const f of files) {
       const form = new FormData();
       form.append('file', f.blob, f.artifact.fileName);
       try {
-        const res = await fetch(`${s.baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/attachments`, {
-          method: 'POST',
-          headers: { ...s.headers, 'X-Atlassian-Token': 'no-check' },
-          body: form,
-        });
+        const res = await fetch(`${s.baseUrl}${this.apiBase()}/issue/${encodeURIComponent(created.key)}/attachments`, { method: 'POST', headers: { ...s.headers, 'X-Atlassian-Token': 'no-check' }, body: form });
         if (!res.ok) {
           results.push({ artifactId: f.artifact.id, ok: false, error: `${res.status} ${await safeText(res)}` });
           continue;
@@ -200,20 +196,16 @@ export class JiraCloudAdapter implements ITrackerAdapter<AdfDoc> {
     return results;
   }
 
-  async findSimilar(s: AuthSession, projectKey: string, signature: string) {
-    // Use the most specific token (path) for text search; status codes are too generic.
-    const tokens = signature.split(/\s+/).filter((t) => t.length > 3 && !/^\d+$/.test(t));
-    if (!tokens.length) return [];
-    const needle = tokens.find((t) => t.startsWith('/')) ?? tokens[0]!;
+  async findSimilar(s: AuthSession, projectKey: string, signature: string): Promise<SimilarIssue[]> {
+    const needle = searchNeedle(signature);
+    if (!needle) return [];
     const jql = `project = "${projectKey}" AND statusCategory != Done AND (summary ~ "${escapeJql(needle)}" OR labels = testlens AND text ~ "${escapeJql(needle)}") ORDER BY created DESC`;
+    const map = (res: { issues: { key: string; fields: { summary: string; status: { name: string } } }[] }) => res.issues.map((i) => ({ key: i.key, summary: i.fields.summary, status: i.fields.status.name, url: `${s.baseUrl}/browse/${i.key}` }));
     try {
-      const res = await this.json<{ issues: { key: string; fields: { summary: string; status: { name: string } } }[] }>(s, 'POST', '/rest/api/3/search/jql', { jql, maxResults: 5, fields: ['summary', 'status'] });
-      return res.issues.map((i) => ({ key: i.key, summary: i.fields.summary, status: i.fields.status.name, url: `${s.baseUrl}/browse/${i.key}` }));
+      return map(await this.json(s, 'POST', '/rest/api/3/search/jql', { jql, maxResults: 5, fields: ['summary', 'status'] }));
     } catch {
-      // fall back to legacy search endpoint
       try {
-        const res = await this.json<{ issues: { key: string; fields: { summary: string; status: { name: string } } }[] }>(s, 'GET', `/rest/api/3/search?jql=${encodeURIComponent(jql)}&maxResults=5&fields=summary,status`);
-        return res.issues.map((i) => ({ key: i.key, summary: i.fields.summary, status: i.fields.status.name, url: `${s.baseUrl}/browse/${i.key}` }));
+        return map(await this.json(s, 'GET', `${this.apiBase()}/search?jql=${encodeURIComponent(jql)}&maxResults=5&fields=summary,status`));
       } catch {
         return [];
       }
@@ -224,7 +216,7 @@ export class JiraCloudAdapter implements ITrackerAdapter<AdfDoc> {
     let maxAttachmentBytes = 10 * 1024 * 1024;
     if (s) {
       try {
-        const cfg = await this.json<{ attachmentsEnabled: boolean; uploadLimit?: number }>(s, 'GET', '/rest/api/3/attachment/meta');
+        const cfg = await this.json<{ uploadLimit?: number }>(s, 'GET', `${this.apiBase()}/attachment/meta`);
         if (cfg.uploadLimit) maxAttachmentBytes = cfg.uploadLimit;
       } catch {
         /* keep default */
@@ -233,7 +225,11 @@ export class JiraCloudAdapter implements ITrackerAdapter<AdfDoc> {
     return { maxAttachmentBytes, maxDescriptionChars: 32_000 };
   }
 
-  private async json<T>(s: { baseUrl: string; headers: Record<string, string> }, method: string, path: string, body?: unknown): Promise<T> {
+  protected apiBase() {
+    return '/rest/api/3';
+  }
+
+  protected async json<T>(s: { baseUrl: string; headers: Record<string, string> }, method: string, path: string, body?: unknown): Promise<T> {
     const res = await fetch(`${s.baseUrl}${path}`, {
       method,
       headers: { ...s.headers, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
@@ -254,46 +250,19 @@ export class JiraCloudAdapter implements ITrackerAdapter<AdfDoc> {
   }
 }
 
-function resolveMappedValue(raw: unknown, draft: BugDraft, scope: Record<string, unknown>, schema?: FieldSchema): unknown {
-  if (raw === '$summary') return draft.summary;
-  if (raw === '$description') return renderAdf(draft);
-  if (raw === '$labels') return draft.labels;
-  if (typeof raw === 'string') {
-    const v = renderTemplate(raw, scope);
-    if (!v) return undefined;
-    if (schema?.type === 'array' && schema.itemsType === 'string') return v.split(',').map((x) => x.trim()).filter(Boolean);
-    if (schema?.type === 'option' || schema?.type === 'priority' || schema?.type === 'component') return matchAllowed(v, schema);
-    if (schema?.type === 'array' && (schema.itemsType === 'component' || schema.itemsType === 'option' || schema.itemsType === 'version')) return v.split(',').map((x) => matchAllowed(x.trim(), schema)).filter(Boolean);
-    if (schema?.type === 'number') return Number(v);
-    if (schema?.type === 'doc') return { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: v }] }] };
-    return v;
-  }
-  if (Array.isArray(raw)) {
-    const items = raw.map((r) => resolveMappedValue(r, draft, scope, schema ? { ...schema, type: schema.itemsType ?? 'string' } : undefined)).filter((x) => x !== undefined);
-    if (raw.includes('$labels')) return Array.from(new Set([...draft.labels, ...(items.flat() as string[])]));
-    return items.flat();
-  }
-  return raw; // already a Jira-shaped object, e.g. { id: "3" }
+/** Jira wants { id } for options/priorities/components/versions, plain strings for text. */
+export function toJiraValue(v: unknown, schema?: FieldSchema): unknown {
+  const strip = (x: unknown) => (x && typeof x === 'object' && 'id' in x ? { id: (x as { id: string }).id } : x && typeof x === 'object' && 'name' in x ? { name: (x as { name: string }).name } : x);
+  if (Array.isArray(v)) return v.map(strip);
+  if (schema?.type === 'doc' && typeof v === 'string') return { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: v }] }] };
+  return strip(v);
 }
 
-function matchAllowed(v: string, schema: FieldSchema) {
-  const hit = schema.allowedValues?.find((a) => a.id === v || a.name.toLowerCase() === v.toLowerCase());
-  return hit ? { id: hit.id } : { name: v };
-}
-
-function escapeJql(s: string) {
+export function escapeJql(s: string) {
   return s.replace(/(["\\])/g, '\\$1');
 }
 
-async function safeText(res: Response) {
-  try {
-    return await res.text();
-  } catch {
-    return '';
-  }
-}
-
-function describeJiraError(status: number, details: unknown): string {
+export function describeJiraError(status: number, details: unknown): string {
   const d = details as { errorMessages?: string[]; errors?: Record<string, string>; message?: string } | string;
   if (typeof d === 'object' && d) {
     const parts = [...(d.errorMessages ?? []), ...Object.entries(d.errors ?? {}).map(([k, v]) => `${k}: ${v}`)];

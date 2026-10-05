@@ -7,7 +7,7 @@ import { DEFAULT_RULES, mergeRules, type RedactionRules } from '@testlens/redact
 import { clearTab, expire, deleteIncident, getBlob, getIncident, listIncidents, putEvent, putRrweb, purgeIncidents, tabCounts } from '../src/buffer/db';
 import { ingestPageExchange, installNetworkCapture } from '../src/capture/network';
 import { finalizeIncident, patchIncident, redactionTotals, rememberPageInfo, rerunEngine, startIncident } from '../src/incident';
-import * as jira from '../src/jira';
+import * as tracker from '../src/tracker';
 import type { CaptureMessage, ContentConfig, RuntimeRequest, RuntimeResponse, TabStatus } from '../src/messages';
 import { isMonitoredUrl, loadSettings, onSettingsChanged, originsToMatchPatterns, type Settings } from '../src/settings';
 import { newId } from '@testlens/schema';
@@ -265,22 +265,24 @@ export default defineBackground(() => {
         await applySettings(await loadSettings());
         await registerContentScripts();
         return true;
-      case 'tl:jira-test':
-        return jira.testConnection((await loadSettings()).jira!);
-      case 'tl:jira-projects':
-        return jira.jira.listProjects(await jira.jiraSession());
-      case 'tl:jira-issue-types':
-        return jira.jira.listIssueTypes(await jira.jiraSession(), req.projectKey);
-      case 'tl:jira-fields':
-        return jira.createFields(req.projectKey, req.issueTypeId);
-      case 'tl:jira-preview':
-        return jira.preview(req.incidentId);
-      case 'tl:jira-create':
-        return jira.create(req.incidentId);
-      case 'tl:jira-similar':
-        return jira.similar(req.incidentId);
-      case 'tl:set-jira-target':
-        return jira.setTarget(req.incidentId, req.target, req.saveAsDefault);
+      case 'tl:tracker-list':
+        return tracker.listTrackers();
+      case 'tl:tracker-test':
+        return tracker.testConnection(req.tracker);
+      case 'tl:tracker-projects':
+        return tracker.projects();
+      case 'tl:tracker-issue-types':
+        return tracker.issueTypes(req.projectKey);
+      case 'tl:tracker-fields':
+        return tracker.createFields(req.projectKey, req.issueTypeId);
+      case 'tl:tracker-preview':
+        return tracker.preview(req.incidentId);
+      case 'tl:tracker-create':
+        return tracker.create(req.incidentId);
+      case 'tl:tracker-similar':
+        return tracker.similar(req.incidentId);
+      case 'tl:set-tracker-target':
+        return tracker.setTarget(req.incidentId, req.target, req.saveAsDefault);
       case 'tl:start-tab-recording':
       case 'tl:stop-tab-recording':
         throw new Error('Tab video recording is not available in this build yet.');

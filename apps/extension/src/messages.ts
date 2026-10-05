@@ -65,14 +65,15 @@ export type RuntimeRequest =
   | { type: 'tl:get-blob'; blobId: string }
   | { type: 'tl:apply-monitoring' }
   | { type: 'tl:enable-panel'; tabId: number }
-  | { type: 'tl:jira-test'; }
-  | { type: 'tl:jira-projects' }
-  | { type: 'tl:jira-issue-types'; projectKey: string }
-  | { type: 'tl:jira-fields'; projectKey: string; issueTypeId: string }
-  | { type: 'tl:jira-preview'; incidentId: string }
-  | { type: 'tl:jira-create'; incidentId: string }
-  | { type: 'tl:set-jira-target'; incidentId: string; target: import('./buffer/db').JiraTarget | undefined; saveAsDefault?: boolean }
-  | { type: 'tl:jira-similar'; incidentId: string }
+  | { type: 'tl:tracker-list' }
+  | { type: 'tl:tracker-test'; tracker: import('./settings').TrackerSettings }
+  | { type: 'tl:tracker-projects' }
+  | { type: 'tl:tracker-issue-types'; projectKey: string }
+  | { type: 'tl:tracker-fields'; projectKey: string; issueTypeId: string }
+  | { type: 'tl:tracker-preview'; incidentId: string }
+  | { type: 'tl:tracker-create'; incidentId: string }
+  | { type: 'tl:set-tracker-target'; incidentId: string; target: import('./buffer/db').TrackerTarget | undefined; saveAsDefault?: boolean }
+  | { type: 'tl:tracker-similar'; incidentId: string }
   | { type: 'tl:start-tab-recording'; tabId: number }
   | { type: 'tl:stop-tab-recording'; tabId: number };
 

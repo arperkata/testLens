@@ -9,15 +9,23 @@
  */
 import type { TrackerMapping } from '@testlens/trackers-core';
 
-export interface JiraSettings {
+/** Connection + default destination for the configured bug tracker. */
+export interface TrackerSettings {
+  /** Adapter id: 'jira-cloud' | 'jira-dc' | 'azure-devops' | 'github' | 'gitlab' | 'linear' */
+  trackerId: string;
   baseUrl: string;
   email: string;
   token: string;
+  /** Container key: Jira project key, ADO project name, GitHub owner/repo, GitLab path, Linear team id. */
   projectKey: string;
+  projectName?: string;
   issueTypeId: string;
   issueTypeName?: string;
   mapping: TrackerMapping;
 }
+
+/** @deprecated pre-multi-tracker shape; migrated to `tracker` on load. */
+export type JiraSettings = Omit<TrackerSettings, 'trackerId' | 'projectName'>;
 
 export interface Settings {
   /**
@@ -38,6 +46,8 @@ export interface Settings {
   traceLinkTemplates: Record<string, string>;
   telemetryHostsExtra: string[];
   retentionDays: number;
+  tracker?: TrackerSettings;
+  /** @deprecated legacy field kept only so old stored settings can be migrated. */
   jira?: JiraSettings;
   /** Set once the user has completed the first-run wizard. */
   onboarded: boolean;
@@ -82,16 +92,19 @@ export async function loadSettings(): Promise<Settings> {
     }
   }
   if (!stored) stored = (await chrome.storage.local.get(KEY))[KEY] as Partial<Settings> | undefined;
-  const secrets = ((await chrome.storage.local.get(SECRETS_KEY))[SECRETS_KEY] ?? {}) as { jiraToken?: string };
+  const secrets = ((await chrome.storage.local.get(SECRETS_KEY))[SECRETS_KEY] ?? {}) as { jiraToken?: string; trackerToken?: string };
   const s: Settings = { ...DEFAULT_SETTINGS, ...(stored ?? {}), redaction: { ...DEFAULT_SETTINGS.redaction, ...(stored?.redaction ?? {}) } };
-  if (s.jira) s.jira = { ...s.jira, token: secrets.jiraToken ?? s.jira.token ?? '' };
+  // Migrate the pre-multi-tracker `jira` block into `tracker`.
+  if (!s.tracker && s.jira) s.tracker = { trackerId: 'jira-cloud', ...s.jira };
+  delete s.jira;
+  if (s.tracker) s.tracker = { ...s.tracker, token: secrets.trackerToken ?? secrets.jiraToken ?? s.tracker.token ?? '' };
   return s;
 }
 
 export async function saveSettings(s: Settings): Promise<void> {
-  const token = s.jira?.token ?? '';
-  const shareable: Settings = { ...s, jira: s.jira ? { ...s.jira, token: '' } : undefined };
-  await chrome.storage.local.set({ [SECRETS_KEY]: { jiraToken: token } });
+  const token = s.tracker?.token ?? '';
+  const shareable: Settings = { ...s, jira: undefined, tracker: s.tracker ? { ...s.tracker, token: '' } : undefined };
+  await chrome.storage.local.set({ [SECRETS_KEY]: { trackerToken: token } });
   const sync = syncArea();
   let synced = false;
   if (sync) {
@@ -116,20 +129,23 @@ export function onSettingsChanged(cb: (s: Settings) => void): () => void {
 
 /** Settings as a shareable JSON document (no token). */
 export function exportSettings(s: Settings): string {
-  const { jira, ...rest } = s;
-  return JSON.stringify({ testlensSettings: 1, ...rest, jira: jira ? { ...jira, token: undefined } : undefined }, null, 2);
+  const { tracker, jira: _legacy, ...rest } = s;
+  return JSON.stringify({ testlensSettings: 1, ...rest, tracker: tracker ? { ...tracker, token: undefined } : undefined }, null, 2);
 }
 
-/** Merge an exported document into current settings. Keeps the local token. */
+/** Merge an exported document into current settings. Keeps the local token when the tracker is unchanged. */
 export function importSettings(current: Settings, json: string): Settings {
   const doc = JSON.parse(json) as Partial<Settings> & { testlensSettings?: number };
   if (doc.testlensSettings !== 1) throw new Error('Not a TestLens settings file');
-  const { testlensSettings: _v, ...incoming } = doc;
+  const { testlensSettings: _v, jira: legacy, ...incoming } = doc;
+  const incomingTracker = incoming.tracker ?? (legacy ? { trackerId: 'jira-cloud', ...legacy } : undefined);
+  const keepToken = incomingTracker && current.tracker && incomingTracker.trackerId === current.tracker.trackerId && incomingTracker.baseUrl === current.tracker.baseUrl;
   return {
     ...current,
     ...incoming,
+    jira: undefined,
     redaction: { ...current.redaction, ...(incoming.redaction ?? {}) },
-    jira: incoming.jira ? { ...incoming.jira, token: current.jira?.token ?? '' } : current.jira,
+    tracker: incomingTracker ? { ...incomingTracker, token: keepToken ? current.tracker!.token : '' } : current.tracker,
     onboarded: true,
   };
 }

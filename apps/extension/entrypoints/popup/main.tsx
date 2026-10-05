@@ -18,7 +18,7 @@ function Popup() {
       setTab(t);
       if (t?.id !== undefined) setStatus(await sendRuntime<TabStatus>({ type: 'tl:get-tab-status', tabId: t.id }));
       const s = await loadSettings();
-      setJiraReady(Boolean(s.jira?.baseUrl && s.jira.projectKey));
+      setJiraReady(Boolean(s.tracker?.token && s.tracker.projectKey));
     })().catch((e) => setError(String(e)));
   }, []);
 
@@ -128,7 +128,7 @@ function Popup() {
           </div>
           {!jiraReady && (
             <p className="muted" style={{ marginTop: 8 }}>
-              Jira is not connected yet. You can still report and review; connect Jira in Settings to create issues.
+              No bug tracker is connected yet. You can still report and review; connect one in Settings to create issues.
             </p>
           )}
         </>

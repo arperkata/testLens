@@ -1,0 +1,15 @@
+{
+  "name": "@testlens/trackers-github",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@testlens/trackers-core": "*",
+    "@testlens/schema": "*"
+  }
+}

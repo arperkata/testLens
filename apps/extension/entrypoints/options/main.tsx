@@ -1,11 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import '../../src/ui/base.css';
-import type { FieldSchema, IssueTypeRef, ProjectRef } from '@testlens/trackers-core';
+import type { FieldSchema, IssueTypeRef, ProjectRef, TrackerDescriptor } from '@testlens/trackers-core';
 import { sendRuntime } from '../../src/messages';
-import { DEFAULT_SETTINGS, describeEntry, exportSettings, importSettings, loadSettings, normalizeOriginInput, originsToMatchPatterns, saveSettings, type Settings } from '../../src/settings';
-import { defaultMapping } from '../../src/jira';
-import { buildMappingFields, defaultFor, optionalFieldsWithValues, requiredFields, stringValues } from '../../src/jira-mapping';
+import { DEFAULT_SETTINGS, describeEntry, exportSettings, importSettings, loadSettings, normalizeOriginInput, originsToMatchPatterns, saveSettings, type Settings, type TrackerSettings } from '../../src/settings';
+import { buildMappingFields, optionalFieldsWithValues, requiredFields, stringValues, withDefaults } from '../../src/jira-mapping';
 import { FieldControl } from '../../src/ui/FieldControl';
 
 function Options() {
@@ -36,7 +35,7 @@ function Options() {
 
       <MonitoringSection s={s} update={update} persist={persist} setMsg={setMsg} />
       <CaptureSection s={s} update={update} persist={persist} />
-      <JiraSection s={s} update={update} persist={persist} setMsg={setMsg} />
+      <TrackerSection s={s} update={update} persist={persist} setMsg={setMsg} />
       <PrivacySection s={s} update={update} persist={persist} />
       <TraceSection s={s} update={update} persist={persist} />
       <DataSection s={s} update={update} persist={persist} setMsg={setMsg} />
@@ -181,36 +180,37 @@ function CaptureSection({ s, update, persist }: SectionProps) {
   );
 }
 
-function JiraSection({ s, update, persist, setMsg }: SectionProps) {
-  const j = s.jira ?? { baseUrl: '', email: '', token: '', projectKey: '', issueTypeId: '', mapping: defaultMapping('', '') };
-  const setJ = (p: Partial<typeof j>) => update({ jira: { ...j, ...p } });
+function TrackerSection({ s, update, persist, setMsg }: SectionProps) {
+  const [descriptors, setDescriptors] = useState<TrackerDescriptor[]>([]);
+  const t: TrackerSettings = s.tracker ?? { trackerId: 'jira-cloud', baseUrl: '', email: '', token: '', projectKey: '', issueTypeId: '', mapping: { trackerId: 'jira-cloud', projectKey: '', issueTypeId: '', fields: { labels: ['$labels'] }, attachKinds: [] } };
+  const d = descriptors.find((x) => x.id === t.trackerId);
+  const setT = (p: Partial<TrackerSettings>) => update({ tracker: { ...t, ...p } });
   const [projects, setProjects] = useState<ProjectRef[]>();
   const [types, setTypes] = useState<IssueTypeRef[]>();
   const [fields, setFields] = useState<FieldSchema[]>();
   const [testing, setTesting] = useState(false);
   const [loadingFields, setLoadingFields] = useState(false);
   const [who, setWho] = useState<string>();
-  /** Values chosen in the guided form, keyed by field key. Strings; comma-separated for multi-value. */
-  const [values, setValues] = useState<Record<string, string>>(() => stringValues(j.mapping.fields));
+  const [values, setValues] = useState<Record<string, string>>(() => stringValues(t.mapping.fields));
   const [advanced, setAdvanced] = useState(false);
-  const [mappingText, setMappingText] = useState(JSON.stringify(j.mapping.fields, null, 2));
+  const [mappingText, setMappingText] = useState(JSON.stringify(t.mapping.fields, null, 2));
 
-  // With saved credentials, load projects, issue types and fields on open so the
-  // project / issue type selects are always editable without re-connecting.
   useEffect(() => {
-    if (!j.baseUrl || !j.email || !j.token) return;
+    void sendRuntime<TrackerDescriptor[]>({ type: 'tl:tracker-list' }).then(setDescriptors);
+  }, []);
+
+  // With saved credentials, load containers, types and fields on open so the selects stay editable.
+  useEffect(() => {
+    if (!t.token) return;
     setLoadingFields(true);
     (async () => {
       try {
-        const [p, t] = await Promise.all([
-          sendRuntime<ProjectRef[]>({ type: 'tl:jira-projects' }),
-          j.projectKey ? sendRuntime<IssueTypeRef[]>({ type: 'tl:jira-issue-types', projectKey: j.projectKey }) : Promise.resolve(undefined),
-        ]);
+        const [p, ty] = await Promise.all([sendRuntime<ProjectRef[]>({ type: 'tl:tracker-projects' }), t.projectKey ? sendRuntime<IssueTypeRef[]>({ type: 'tl:tracker-issue-types', projectKey: t.projectKey }) : Promise.resolve(undefined)]);
         setProjects(p);
-        if (t) setTypes(t);
-        if (j.projectKey && j.issueTypeId) setFields(await sendRuntime<FieldSchema[]>({ type: 'tl:jira-fields', projectKey: j.projectKey, issueTypeId: j.issueTypeId }));
+        if (ty) setTypes(ty);
+        if (t.projectKey && t.issueTypeId) setFields(await sendRuntime<FieldSchema[]>({ type: 'tl:tracker-fields', projectKey: t.projectKey, issueTypeId: t.issueTypeId }));
       } catch (e) {
-        setMsg?.({ kind: 'err', text: `Jira: ${e instanceof Error ? e.message : String(e)}` });
+        setMsg?.({ kind: 'err', text: `${d?.displayName ?? 'Tracker'}: ${e instanceof Error ? e.message : String(e)}` });
       } finally {
         setLoadingFields(false);
       }
@@ -218,18 +218,32 @@ function JiraSection({ s, update, persist, setMsg }: SectionProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const switchTracker = (trackerId: string) => {
+    const nd = descriptors.find((x) => x.id === trackerId);
+    const baseUrl = nd?.authFields.find((f) => f.key === 'baseUrl')?.placeholder ?? '';
+    update({ tracker: { trackerId, baseUrl: nd?.authFields.some((f) => f.key === 'baseUrl') && !/yourcompany|yourorg|example/.test(baseUrl) ? baseUrl : '', email: '', token: '', projectKey: '', issueTypeId: '', mapping: { trackerId, projectKey: '', issueTypeId: '', fields: { labels: ['$labels'] }, attachKinds: [] } } });
+    setProjects(undefined);
+    setTypes(undefined);
+    setFields(undefined);
+    setWho(undefined);
+    setValues({});
+    setMappingText(JSON.stringify({ labels: ['$labels'] }, null, 2));
+  };
+
   const connect = async () => {
     try {
       setTesting(true);
-      const origin = `${new URL(j.baseUrl).origin}/*`;
+      const base = t.baseUrl || d?.authFields.find((f) => f.key === 'baseUrl')?.placeholder || '';
+      const origin = `${new URL(base).origin}/*`;
       const ok = await chrome.permissions.request({ origins: [origin] });
-      if (!ok) throw new Error('Permission to call Jira was not granted');
-      await persist({ ...s, jira: j });
-      const me = await sendRuntime<{ displayName?: string }>({ type: 'tl:jira-test' });
+      if (!ok) throw new Error(`Permission to call ${new URL(base).origin} was not granted`);
+      const next = { ...t, baseUrl: base };
+      await persist({ ...s, tracker: next });
+      const me = await sendRuntime<{ displayName?: string }>({ type: 'tl:tracker-test', tracker: next });
       setWho(me.displayName);
-      setProjects(await sendRuntime<ProjectRef[]>({ type: 'tl:jira-projects' }));
-      if (j.projectKey) setTypes(await sendRuntime<IssueTypeRef[]>({ type: 'tl:jira-issue-types', projectKey: j.projectKey }));
-      setMsg?.({ kind: 'ok', text: `Connected as ${me.displayName}` });
+      setProjects(await sendRuntime<ProjectRef[]>({ type: 'tl:tracker-projects' }));
+      if (t.projectKey) setTypes(await sendRuntime<IssueTypeRef[]>({ type: 'tl:tracker-issue-types', projectKey: t.projectKey }));
+      setMsg?.({ kind: 'ok', text: `Connected to ${d?.displayName ?? 'tracker'} as ${me.displayName}` });
     } catch (e) {
       setMsg?.({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -238,37 +252,30 @@ function JiraSection({ s, update, persist, setMsg }: SectionProps) {
   };
 
   const loadTypes = async (projectKey: string) => {
-    setJ({ projectKey, issueTypeId: '', issueTypeName: undefined });
+    const p = projects?.find((x) => x.key === projectKey);
+    setT({ projectKey, projectName: p?.name, issueTypeId: '', issueTypeName: undefined });
     setFields(undefined);
     setTypes(undefined);
     if (!projectKey) return;
-    const t = await sendRuntime<IssueTypeRef[]>({ type: 'tl:jira-issue-types', projectKey });
-    setTypes(t);
-    // auto-pick "Bug" when it exists
-    const bug = t.find((x) => !x.subtask && /^bug$/i.test(x.name));
-    if (bug) await loadFields(bug.id, projectKey, t);
+    const ty = await sendRuntime<IssueTypeRef[]>({ type: 'tl:tracker-issue-types', projectKey });
+    setTypes(ty);
+    const bug = ty.find((x) => !x.subtask && /^bug$/i.test(x.name)) ?? ty.find((x) => !x.subtask);
+    if (bug) await loadFields(bug.id, projectKey, ty, p?.name);
   };
 
-  const loadFields = async (issueTypeId: string, projectKey = j.projectKey, typeList = types) => {
-    const t = typeList?.find((x) => x.id === issueTypeId);
+  const loadFields = async (issueTypeId: string, projectKey = t.projectKey, typeList = types, projectName = t.projectName) => {
+    const ty = typeList?.find((x) => x.id === issueTypeId);
     setLoadingFields(true);
     try {
-      const f = await sendRuntime<FieldSchema[]>({ type: 'tl:jira-fields', projectKey, issueTypeId });
+      const f = await sendRuntime<FieldSchema[]>({ type: 'tl:tracker-fields', projectKey, issueTypeId });
       setFields(f);
-      // Build defaults for required fields the tester has not chosen yet.
-      const next = { ...values };
-      for (const field of requiredFields(f)) {
-        if (next[field.key]) continue;
-        const d = defaultFor(field);
-        if (d !== undefined) next[field.key] = d;
-      }
+      const next = withDefaults(values, f);
       setValues(next);
       const mappingFields = buildMappingFields(next, f);
       setMappingText(JSON.stringify(mappingFields, null, 2));
-      const nextJira = { ...j, projectKey, issueTypeId, issueTypeName: t?.name, mapping: { ...j.mapping, projectKey, issueTypeId, fields: mappingFields } };
-      // persist immediately so the side panel is ready without an extra Save click
-      await persist({ ...s, jira: nextJira });
-      setMsg?.({ kind: 'ok', text: `Mapping generated for ${projectKey} / ${t?.name ?? 'issue type'}${requiredFields(f).length ? ' — review the required fields below' : ''}` });
+      const nextTracker: TrackerSettings = { ...t, projectKey, projectName, issueTypeId, issueTypeName: ty?.name, mapping: { ...t.mapping, trackerId: t.trackerId, projectKey, issueTypeId, fields: mappingFields } };
+      await persist({ ...s, tracker: nextTracker });
+      setMsg?.({ kind: 'ok', text: `Default destination set: ${projectKey} / ${ty?.name ?? issueTypeId}${requiredFields(f).length ? ' — review the required fields below' : ''}` });
     } catch (e) {
       setMsg?.({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -282,67 +289,96 @@ function JiraSection({ s, update, persist, setMsg }: SectionProps) {
     if (fields) setMappingText(JSON.stringify(buildMappingFields(next, fields), null, 2));
   };
 
-  const saveJira = async () => {
+  const save = async () => {
     let parsed: Record<string, unknown>;
     try {
       parsed = advanced ? (JSON.parse(mappingText) as Record<string, unknown>) : buildMappingFields(values, fields ?? []);
     } catch {
       return setMsg?.({ kind: 'err', text: 'Field mapping is not valid JSON' });
     }
-    await persist({ ...s, jira: { ...j, mapping: { ...j.mapping, projectKey: j.projectKey, issueTypeId: j.issueTypeId, fields: parsed } } });
+    await persist({ ...s, tracker: { ...t, mapping: { ...t.mapping, trackerId: t.trackerId, projectKey: t.projectKey, issueTypeId: t.issueTypeId, fields: parsed } } });
   };
 
   const required = fields ? requiredFields(fields) : [];
-  const optionalWithValues = fields ? optionalFieldsWithValues(fields) : [];
+  const optional = fields ? optionalFieldsWithValues(fields) : [];
   const missing = required.filter((f) => !values[f.key]);
+  const authReady = Boolean(t.token) && (d?.authFields ?? []).filter((f) => f.key !== 'secret').every((f) => f.key === 'email' ? (d?.authMethod === 'basic' ? Boolean(t.email) : true) : Boolean(t.baseUrl) || Boolean(f.placeholder));
 
   return (
     <div className="card">
-      <h2 style={{ marginTop: 0 }}>3. Jira Cloud</h2>
-      <p className="muted">
-        Uses your own Jira account via an API token, so issues are created as you. Create a token at <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noreferrer">id.atlassian.com → API tokens</a>. The token is stored only in this browser profile.
-      </p>
+      <h2 style={{ marginTop: 0 }}>3. Bug tracker</h2>
+      <label>Tracker</label>
+      <select value={t.trackerId} onChange={(e) => switchTracker(e.target.value)} style={{ maxWidth: 360 }}>
+        {descriptors.map((x) => (
+          <option key={x.id} value={x.id}>
+            {x.displayName}
+          </option>
+        ))}
+        {!descriptors.length && <option value={t.trackerId}>{t.trackerId}</option>}
+      </select>
+      {d && (
+        <p className="muted">
+          {d.blurb}
+          {d.tokenHelpUrl && (
+            <>
+              {' '}
+              <a href={d.tokenHelpUrl} target="_blank" rel="noreferrer">Create a token</a>.
+            </>
+          )}{' '}
+          Credentials are stored only in this browser profile; the token never syncs.
+        </p>
+      )}
+
       <div className="row" style={{ gap: 12 }}>
-        <div style={{ flex: 2 }}>
-          <label>Jira site URL</label>
-          <input value={j.baseUrl} onChange={(e) => setJ({ baseUrl: e.target.value.trim() })} placeholder="https://yourcompany.atlassian.net" />
-        </div>
-        <div style={{ flex: 2 }}>
-          <label>Email</label>
-          <input value={j.email} onChange={(e) => setJ({ email: e.target.value.trim() })} placeholder="you@company.com" />
-        </div>
-        <div style={{ flex: 3 }}>
-          <label>API token</label>
-          <input type="password" value={j.token} onChange={(e) => setJ({ token: e.target.value.trim() })} />
-        </div>
+        {(d?.authFields ?? []).map((f) => (
+          <div key={f.key} style={{ flex: f.key === 'secret' ? 3 : 2, minWidth: 220 }}>
+            <label>{f.label}</label>
+            <input
+              type={f.type === 'password' ? 'password' : 'text'}
+              value={f.key === 'baseUrl' ? t.baseUrl : f.key === 'email' ? t.email : t.token}
+              placeholder={f.placeholder}
+              title={f.help}
+              onChange={(e) => setT(f.key === 'baseUrl' ? { baseUrl: e.target.value.trim() } : f.key === 'email' ? { email: e.target.value.trim() } : { token: e.target.value.trim() })}
+            />
+            {f.help && <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>{f.help}</div>}
+          </div>
+        ))}
       </div>
       <div className="row" style={{ marginTop: 10 }}>
-        <button className="primary" onClick={connect} disabled={testing || !j.baseUrl || !j.email || !j.token}>{testing ? 'Connecting…' : 'Connect & load projects'}</button>
+        <button className="primary" onClick={connect} disabled={testing || !authReady}>{testing ? 'Connecting…' : `Connect & load ${d?.containerLabel.toLowerCase() ?? 'project'}s`}</button>
         {who && <span className="ok">Connected as {who}</span>}
       </div>
 
-      {(projects || j.projectKey) && (
+      {(projects || t.projectKey) && (
         <div className="row" style={{ gap: 12, marginTop: 8 }}>
           <div style={{ flex: 1 }}>
-            <label>Project</label>
+            <label>{d?.containerLabel ?? 'Project'}</label>
             {projects ? (
-              <select value={j.projectKey} onChange={(e) => void loadTypes(e.target.value)}>
+              <select value={t.projectKey} onChange={(e) => void loadTypes(e.target.value)}>
                 <option value="">— select —</option>
-                {projects.map((p) => <option key={p.key} value={p.key}>{p.key} — {p.name}</option>)}
+                {projects.map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.key === p.name ? p.name : `${p.key} — ${p.name}`}
+                  </option>
+                ))}
               </select>
             ) : (
-              <input value={j.projectKey} readOnly />
+              <input value={t.projectName ?? t.projectKey} readOnly />
             )}
           </div>
           <div style={{ flex: 1 }}>
-            <label>Issue type</label>
+            <label>{d?.typeLabel ?? 'Issue type'}</label>
             {types ? (
-              <select value={j.issueTypeId} onChange={(e) => void loadFields(e.target.value)}>
+              <select value={t.issueTypeId} onChange={(e) => void loadFields(e.target.value)}>
                 <option value="">— select —</option>
-                {types.filter((t) => !t.subtask).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                {types.filter((x) => !x.subtask).map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.name}
+                  </option>
+                ))}
               </select>
             ) : (
-              <input value={j.issueTypeName ?? j.issueTypeId} readOnly />
+              <input value={t.issueTypeName ?? t.issueTypeId} readOnly />
             )}
           </div>
         </div>
@@ -354,8 +390,8 @@ function JiraSection({ s, update, persist, setMsg }: SectionProps) {
         <div style={{ marginTop: 10 }}>
           {required.length ? (
             <>
-              <h3 style={{ marginBottom: 2 }}>Required by this project</h3>
-              <p className="muted" style={{ marginTop: 0 }}>Defaults were chosen for you. Change any of them; they are used for every bug and can be edited in Jira afterwards.</p>
+              <h3 style={{ marginBottom: 2 }}>Required by this {d?.containerLabel.toLowerCase() ?? 'project'}</h3>
+              <p className="muted" style={{ marginTop: 0 }}>Defaults were chosen for you. Change any of them; they are used for every bug unless you change them per bug in the side panel.</p>
               <div className="row" style={{ gap: 12, alignItems: 'flex-end' }}>
                 {required.map((f) => (
                   <FieldControl key={f.key} field={f} value={values[f.key] ?? ''} onChange={(v) => setValue(f.key, v)} />
@@ -365,27 +401,25 @@ function JiraSection({ s, update, persist, setMsg }: SectionProps) {
           ) : (
             <p className="ok">No extra required fields. Summary and description are enough.</p>
           )}
-
-          {optionalWithValues.length > 0 && (
+          {optional.length > 0 && (
             <details style={{ marginTop: 8 }}>
-              <summary className="muted">Optional defaults ({optionalWithValues.length} fields such as {optionalWithValues.slice(0, 3).map((f) => f.name).join(', ')})</summary>
+              <summary className="muted">Optional defaults ({optional.slice(0, 3).map((f) => f.name).join(', ')}{optional.length > 3 ? '…' : ''})</summary>
               <div className="row" style={{ gap: 12, alignItems: 'flex-end' }}>
-                {optionalWithValues.map((f) => (
+                {optional.map((f) => (
                   <FieldControl key={f.key} field={f} value={values[f.key] ?? ''} onChange={(v) => setValue(f.key, v)} allowEmpty />
                 ))}
               </div>
             </details>
           )}
-
           <details style={{ marginTop: 8 }} open={advanced} onToggle={(e) => setAdvanced((e.target as HTMLDetailsElement).open)}>
             <summary className="muted">Advanced: raw field mapping (JSON)</summary>
             <p className="muted">Values: "$labels", "$summary", "$description", or templates like {'{{draft.environmentSummary}}'}. Editing here overrides the form above when you save.</p>
             <textarea className="mono" value={mappingText} onChange={(e) => setMappingText(e.target.value)} style={{ minHeight: 120 }} />
           </details>
-
           <div className="row" style={{ marginTop: 10 }}>
-            <button className="primary" onClick={saveJira} disabled={!j.projectKey || !j.issueTypeId || missing.length > 0}>Save Jira settings</button>
+            <button className="primary" onClick={save} disabled={!t.projectKey || !t.issueTypeId || missing.length > 0}>Save tracker settings</button>
             {missing.length > 0 && <span className="warn">Choose a value for: {missing.map((f) => f.name).join(', ')}</span>}
+            {d?.attachments === 'none' && <span className="muted">{d.displayName} cannot receive file attachments via its API; evidence stays downloadable from TestLens.</span>}
           </div>
         </div>
       )}
@@ -460,7 +494,7 @@ function DataSection({ s, update, persist, setMsg }: SectionProps) {
       <div className="row" style={{ marginTop: 10 }}>
         <button onClick={() => persist()}>Save</button>
         <button className="danger" onClick={clearAll}>Clear all local data</button>
-        <button onClick={() => persist({ ...DEFAULT_SETTINGS, jira: s.jira, monitoredOrigins: s.monitoredOrigins, onboarded: true })}>Reset other settings to defaults</button>
+        <button onClick={() => persist({ ...DEFAULT_SETTINGS, tracker: s.tracker, monitoredOrigins: s.monitoredOrigins, onboarded: true })}>Reset other settings to defaults</button>
       </div>
     </div>
   );

@@ -125,19 +125,28 @@ Monitoring status is shown in the popup: a green dot with live counts means the 
 
 Click **Save** after changes. Buffer settings take effect immediately; replay and body settings apply to tabs after reload.
 
-### 4.3 Jira Cloud connection
+### 4.3 Bug tracker connection
 
-1. Create an API token: sign in at https://id.atlassian.com/manage-profile/security/api-tokens, click **Create API token**, label it "TestLens", copy the value. It is shown only once.
-2. In TestLens settings → **Jira Cloud**, enter:
-   - **Jira site URL**: `https://yourcompany.atlassian.net`
-   - **Email**: the email you log into Jira with
-   - **API token**: the value you copied
-3. Click **Connect & load projects**. Accept the browser prompt granting TestLens access to your Jira site.
-4. "Connected as <your name>" confirms authentication. Choose the **Project**. TestLens auto-selects the **Bug** issue type when the project has one; change it if needed.
+TestLens files issues into one configured tracker. Pick it in settings → **Bug tracker** → **Tracker**, fill the connection fields that appear, click **Connect & load …**, accept the browser permission prompt for that host, then choose the container and type. The token is stored in `chrome.storage.local` for this browser profile only and never syncs or leaves the machine except to the tracker itself.
 
-The token is stored in `chrome.storage.local` for this browser profile only. It is never sent anywhere except your Jira site.
+| Tracker | Connection fields | Where to get the credential | Container / type | Attachments |
+|---|---|---|---|---|
+| **Jira Cloud** | Site URL (`https://yourcompany.atlassian.net`), email, API token | id.atlassian.com → Security → **API tokens** → Create. Shown once. | Project / Issue type | yes |
+| **Jira Server / Data Center** | Base URL (`https://jira.yourcompany.com`), personal access token. For servers older than 8.14, enter your username and use your password as the token. | Profile → **Personal Access Tokens** → Create | Project / Issue type | yes |
+| **Azure DevOps Boards** | Organization URL (`https://dev.azure.com/yourorg`; Server: `https://server/tfs/DefaultCollection`), personal access token | User settings → **Personal access tokens** → New Token, scope *Work Items: Read & write* | Project / Work item type | yes |
+| **GitHub Issues** | API URL (`https://api.github.com`; Enterprise Server: `https://ghe.example.com/api/v3`), fine-grained token | Settings → Developer settings → **Fine-grained tokens**; grant *Issues: Read and write* on the repositories you file to | Repository / Issue | **no** (GitHub's API has none) |
+| **GitLab Issues** | GitLab URL (`https://gitlab.com` or self-managed), personal access token | User settings → **Access tokens**, scope *api* | Project / Issue or Incident | yes (uploaded and linked in a note) |
+| **Linear** | API URL (`https://api.linear.app/graphql`), personal API key | Settings → Security & access → **Personal API keys** | Team / Issue | yes |
 
-If your organisation blocks API tokens (the token page says so), ask your Atlassian admin, or request the OAuth sign-in option on the roadmap.
+Notes per tracker:
+
+- **Jira Cloud / DC**: issues are created as you. If your organisation blocks API tokens, ask your Atlassian admin; OAuth sign-in is on the roadmap.
+- **Azure DevOps**: for the Bug type the description goes into *Repro Steps* (the field Boards shows first) and the actual result into *Description*; other types use *Description*. TestLens labels become tags. Required fields such as Severity or Area path appear as dropdowns or text.
+- **GitHub**: labels and milestone are the only fields. Evidence files cannot be attached through the API; the description says so and the files remain downloadable on the Evidence tab for drag-and-drop if needed.
+- **GitLab**: labels, milestone, confidential flag and weight are available. Evidence files are uploaded to the project and linked from a "TestLens evidence" note on the issue.
+- **Linear**: priority, labels, status and project are available. TestLens text labels are appended to the description since Linear labels are ids.
+
+After connecting, choose the container; TestLens auto-selects a type named **Bug** when one exists.
 
 ### 4.4 Required fields and field mapping
 

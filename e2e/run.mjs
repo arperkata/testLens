@@ -96,7 +96,8 @@ try {
         telemetryHostsExtra: [],
         retentionDays: 7,
         onboarded: true,
-        jira: {
+        tracker: {
+          trackerId: 'jira-cloud',
           baseUrl: `${APP}/jira`,
           email: 'tester@example.com',
           token: 'tok',
@@ -262,20 +263,20 @@ try {
   await optPage.waitForTimeout(800);
   await optPage.screenshot({ path: path.join(outDir, 'options.png'), fullPage: true });
   // ---- Jira preview + create against the mock ----
-  const prev = await cfgPage.evaluate((id) => chrome.runtime.sendMessage({ type: 'tl:jira-preview', incidentId: id }), incidentId);
+  const prev = await cfgPage.evaluate((id) => chrome.runtime.sendMessage({ type: 'tl:tracker-preview', incidentId: id }), incidentId);
   check(prev.ok, `jira preview ok (${prev.ok ? '' : prev.error})`);
   if (prev.ok) {
     check(prev.data.validation.ok, `jira validation ok (${JSON.stringify(prev.data.validation.problems)})`);
     check(prev.data.payload.fields.customfield_10042?.includes('Chrome'), 'template-mapped custom field filled');
     check(prev.data.payload.fields.priority?.id === '2', 'priority resolved by name');
   }
-  const sim = await cfgPage.evaluate((id) => chrome.runtime.sendMessage({ type: 'tl:jira-similar', incidentId: id }), incidentId);
+  const sim = await cfgPage.evaluate((id) => chrome.runtime.sendMessage({ type: 'tl:tracker-similar', incidentId: id }), incidentId);
   check(sim.ok && sim.data.length === 1 && sim.data[0].key === 'SHOP-1', 'similar issue search returned SHOP-1');
 
-  const created = await cfgPage.evaluate((id) => chrome.runtime.sendMessage({ type: 'tl:jira-create', incidentId: id }), incidentId);
-  check(created.ok, `jira create ok (${created.ok ? created.data.jira.key : created.error})`);
+  const created = await cfgPage.evaluate((id) => chrome.runtime.sendMessage({ type: 'tl:tracker-create', incidentId: id }), incidentId);
+  check(created.ok, `jira create ok (${created.ok ? created.data.created.key : created.error})`);
   if (created.ok) {
-    const att = created.data.jira.attachments;
+    const att = created.data.created.attachments;
     console.log('  attachments:', att.map((a) => `${a.fileName}:${a.ok ? 'ok' : a.error}`).join(', '));
     check(att.length >= 5 && att.every((a) => a.ok), 'all attachments uploaded');
     const state = await (await fetch(`${APP}/__state`)).json();
