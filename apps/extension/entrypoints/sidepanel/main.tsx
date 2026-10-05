@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChromeBuiltinProvider, getPreset, type BuiltinAvailability } from '@testlens/ai';
 import { createRoot } from 'react-dom/client';
 import '../../src/ui/base.css';
 import type { BugContext, BugDraft, EvidenceItem, FocalEvent } from '@testlens/schema';
@@ -311,19 +312,60 @@ function BugTab({ ctx, draft, incident, onPatch, onRerun, onAiApplied }: { ctx: 
  */
 function AiPanel({ ctx, draft, incident, onApplied }: { ctx: BugContext; draft: BugDraft; incident: Incident; onApplied: (i: Incident) => void }) {
   const [enabled, setEnabled] = useState<boolean>();
+  const [provider, setProvider] = useState<string>();
+  const [builtin, setBuiltin] = useState<BuiltinAvailability>();
+  const [progress, setProgress] = useState<number>();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string>();
   const [showSent, setShowSent] = useState(false);
   const [sent, setSent] = useState<unknown>();
+  const autoRan = useRef(false);
   useEffect(() => {
-    void loadSettings().then((s) => setEnabled(s.ai.enabled && Boolean(s.ai.apiKey)));
+    void loadSettings().then(async (s) => {
+      setProvider(s.ai.provider);
+      const preset = getPreset(s.ai.provider);
+      setEnabled(s.ai.enabled && (!preset.needsKey || Boolean(s.ai.apiKey)));
+      if (s.ai.provider === 'chrome-builtin') setBuiltin(await ChromeBuiltinProvider.availability());
+    });
   }, []);
   const a = ctx.analysis;
+
+  /** Run in this page when the provider is the on-device model (the background may not have the API). */
+  const runInPage = async () => {
+    const s = await loadSettings();
+    const input = await sendRuntime<import('@testlens/ai').AnalysisInput>({ type: 'tl:ai-projection', incidentId: incident.incidentId });
+    const analysis = await new ChromeBuiltinProvider().analyze(input, { apiKey: '', model: s.ai.model, baseUrl: '' });
+    return sendRuntime<Incident>({ type: 'tl:ai-store', incidentId: incident.incidentId, analysis });
+  };
+
   const run = async () => {
     setBusy(true);
     setErr(undefined);
     try {
-      onApplied(await sendRuntime<Incident>({ type: 'tl:ai-enhance', incidentId: incident.incidentId }));
+      onApplied(provider === 'chrome-builtin' ? await runInPage() : await sendRuntime<Incident>({ type: 'tl:ai-enhance', incidentId: incident.incidentId }));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // On-device model present and nothing analysed yet → do it now, no click needed.
+  useEffect(() => {
+    if (autoRan.current || !enabled || provider !== 'chrome-builtin' || builtin !== 'available' || a || incident.status !== 'ready') return;
+    autoRan.current = true;
+    void run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, provider, builtin, a, incident.status]);
+
+  const download = async () => {
+    setBusy(true);
+    setErr(undefined);
+    try {
+      setProgress(0);
+      await ChromeBuiltinProvider.download((f) => setProgress(f));
+      setBuiltin(await ChromeBuiltinProvider.availability());
+      setProgress(undefined);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -351,12 +393,39 @@ function AiPanel({ ctx, draft, incident, onApplied }: { ctx: BugContext; draft: 
       <div className="card" style={{ borderStyle: 'dashed' }}>
         <div className="row between">
           <span className="muted">
-            <span className="badge ai" style={{ marginLeft: 0 }}>AI</span> Optional: let an AI model rewrite the steps to reproduce from your recorded actions and draft the analysis. Off until you add an API key.
+            <span className="badge ai" style={{ marginLeft: 0 }}>AI</span> Optional: let an AI model rewrite the steps to reproduce from your recorded actions and draft the analysis.
           </span>
           <button className="small" onClick={() => chrome.runtime.openOptionsPage()}>Set up in Settings</button>
         </div>
       </div>
     );
+
+  // On-device model states that need the tester's attention (no key, no login involved)
+  if (provider === 'chrome-builtin' && builtin && builtin !== 'available' && !a) {
+    const canDownload = builtin === 'downloadable' || builtin === 'downloading';
+    return (
+      <div className="card" style={{ borderColor: 'var(--ai)' }}>
+        <div className="row between">
+          <b>
+            <span className="badge ai" style={{ marginLeft: 0 }}>AI</span> Chrome built-in model
+          </b>
+          {canDownload ? (
+            <button className="small primary" disabled={busy} onClick={download}>
+              {busy ? `Downloading… ${progress !== undefined ? `${Math.round(progress * 100)}%` : ''}` : 'Download model (one time, ≈2 GB)'}
+            </button>
+          ) : (
+            <button className="small" onClick={() => chrome.runtime.openOptionsPage()}>Choose another provider</button>
+          )}
+        </div>
+        <p className="muted" style={{ marginBottom: 0 }}>
+          {builtin === 'unsupported' && 'This browser does not expose Chrome’s built-in AI (needs Chrome 138 or newer). Switch to Groq’s free tier in Settings; it takes one API key.'}
+          {builtin === 'unavailable' && 'This device cannot run the built-in model (disk or hardware requirements). Switch to Groq’s free tier in Settings; it takes one API key.'}
+          {canDownload && 'Chrome downloads Gemini Nano once; afterwards suggestions are generated on this machine with no account and nothing sent anywhere.'}
+        </p>
+        {err && <p className="err">{err}</p>}
+      </div>
+    );
+  }
 
   const applied = new Set(draft.aiApplied ?? []);
   const field = (key: 'summary' | 'stepsToReproduce' | 'expectedResult' | 'actualResult', title: string, body: string | undefined) =>

@@ -179,11 +179,18 @@ Summary, description, project and issue type are always filled by TestLens and n
 
 ### 4.4a AI analysis (optional, off by default)
 
-TestLens can ask an AI model to rewrite the **steps to reproduce** from the actions recorded in the rolling window and to draft the **bug summary**, expected/actual and a short technical analysis. Free-tier providers are supported; no paid account is needed. Settings → **AI analysis**:
+TestLens can ask an AI model to rewrite the **steps to reproduce** from the actions recorded in the rolling window and to draft the **bug summary**, expected/actual and a short technical analysis.
+
+**Zero setup by default.** The default provider is **Chrome's built-in on-device model** (Gemini Nano): no account, no key, nothing leaves the machine. The first time, Chrome downloads the model once (≈2 GB); the Bug tab and Settings show a **Download model** button when that is needed. Requirements: Chrome 138 or newer, about 22 GB free disk, and a GPU with 4 GB VRAM or a capable CPU. On devices that cannot run it, TestLens says so and points to Groq's free tier, which needs one free API key.
+
+Why a key cannot simply be built in: an AI key is a personal credential with a quota. Shipping one inside an open-source extension would let anyone extract and abuse it and would breach the provider's terms. The on-device model is the honest way to have AI with no login.
+
+Providers in Settings → **AI analysis**:
 
 | Provider | Cost | Key | Default model | Data handling |
 |---|---|---|---|---|
-| **Groq** (default, recommended) | free tier | console.groq.com → API Keys | `llama-3.3-70b-versatile` | processed by Groq, not used for training per their policy |
+| **Chrome built-in** (default, recommended) | free, on-device | none | `gemini-nano` | nothing leaves your machine |
+| **Groq** | free tier | console.groq.com → API Keys | `llama-3.3-70b-versatile` | processed by Groq, not used for training per their policy |
 | Google Gemini | free tier | aistudio.google.com → Get API key | `gemini-2.0-flash` | free tier may be used to improve Google products; avoid production personal data |
 | OpenRouter | free models | openrouter.ai → Keys | `meta-llama/llama-3.3-70b-instruct:free` | free models may log prompts |
 | Ollama | free, local | none; install from ollama.com and run `ollama pull llama3.1:8b` | `llama3.1:8b` | nothing leaves your machine |

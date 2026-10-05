@@ -6,7 +6,7 @@ import { sendRuntime } from '../../src/messages';
 import { ARTIFACT_KIND_LABELS, DEFAULT_SETTINGS, describeEntry, exportSettings, importSettings, loadSettings, normalizeOriginInput, originsToMatchPatterns, saveSettings, type Settings, type TrackerSettings } from '../../src/settings';
 import { buildMappingFields, optionalFieldsWithValues, requiredFields, stringValues, withDefaults } from '../../src/jira-mapping';
 import { FieldControl } from '../../src/ui/FieldControl';
-import { PROVIDER_PRESETS } from '@testlens/ai';
+import { ChromeBuiltinProvider, PROVIDER_PRESETS, type BuiltinAvailability } from '@testlens/ai';
 
 function Options() {
   const [s, setS] = useState<Settings>();
@@ -529,7 +529,43 @@ function AiSection({ s, update, persist, setMsg }: SectionProps) {
   };
 
   const tierBadge = (t: typeof preset.tier) => (t === 'free' ? <span className="badge ok">free tier</span> : t === 'local' ? <span className="badge ok">local, free</span> : <span className="badge warn">paid</span>);
-  const ready = Boolean(ai.baseUrl) && (!preset.needsKey || Boolean(ai.apiKey));
+  const isBuiltin = preset.id === 'chrome-builtin';
+  const ready = isBuiltin || (Boolean(ai.baseUrl) && (!preset.needsKey || Boolean(ai.apiKey)));
+
+  // Chrome's on-device model: availability is checked in this page (the API lives in page contexts).
+  const [builtin, setBuiltin] = useState<BuiltinAvailability>();
+  const [progress, setProgress] = useState<number>();
+  useEffect(() => {
+    if (isBuiltin) void ChromeBuiltinProvider.availability().then(setBuiltin);
+  }, [isBuiltin]);
+  const downloadBuiltin = async () => {
+    setTesting(true);
+    try {
+      setProgress(0);
+      await ChromeBuiltinProvider.download((f) => setProgress(f));
+      setBuiltin(await ChromeBuiltinProvider.availability());
+      await persist({ ...s, ai: { ...ai, enabled: true } });
+      setMsg?.({ kind: 'ok', text: 'Built-in model ready. AI suggestions now run on this machine.' });
+    } catch (e) {
+      setMsg?.({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setProgress(undefined);
+      setTesting(false);
+    }
+  };
+  const testBuiltin = async () => {
+    setTesting(true);
+    try {
+      const r = await new ChromeBuiltinProvider().test({ apiKey: '', model: ai.model, baseUrl: '' });
+      await persist({ ...s, ai: { ...ai, enabled: true } });
+      setOk(r.model);
+      setMsg?.({ kind: 'ok', text: 'Chrome built-in AI is ready; nothing leaves this machine.' });
+    } catch (e) {
+      setMsg?.({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   return (
     <div className="card">
@@ -571,16 +607,35 @@ function AiSection({ s, update, persist, setMsg }: SectionProps) {
         </p>
       </div>
 
+      {isBuiltin && (
+        <div className="card" style={{ background: 'var(--panel2)', marginTop: 8 }}>
+          <div className="row between">
+            <b>
+              Model status:{' '}
+              {builtin === undefined ? '…' : builtin === 'available' ? <span className="ok">ready on this machine</span> : builtin === 'downloadable' ? <span className="warn">not downloaded yet</span> : builtin === 'downloading' ? <span className="warn">downloading</span> : builtin === 'unsupported' ? <span className="err">not available in this browser (Chrome 138+ needed)</span> : <span className="err">unavailable on this device</span>}
+            </b>
+            {(builtin === 'downloadable' || builtin === 'downloading') && (
+              <button className="primary small" disabled={testing} onClick={downloadBuiltin}>
+                {testing ? `Downloading… ${progress !== undefined ? `${Math.round(progress * 100)}%` : ''}` : 'Download model (one time, ≈2 GB)'}
+              </button>
+            )}
+          </div>
+          {(builtin === 'unsupported' || builtin === 'unavailable') && <p className="muted" style={{ marginBottom: 0 }}>Pick <b>Groq (free tier)</b> above instead: one free API key, no payment details.</p>}
+        </div>
+      )}
+
       <h3 style={{ marginBottom: 0 }}>Step 2 — connection</h3>
       <div className="row" style={{ gap: 12 }}>
         <div style={{ flex: 1, minWidth: 180 }}>
           <label>Model</label>
-          <input value={ai.model} onChange={(e) => setAi({ model: e.target.value.trim() })} placeholder={preset.defaultModel} />
+          <input value={ai.model} onChange={(e) => setAi({ model: e.target.value.trim() })} placeholder={preset.defaultModel} disabled={isBuiltin} />
         </div>
-        <div style={{ flex: 2, minWidth: 240 }}>
-          <label>API base URL</label>
-          <input value={ai.baseUrl} onChange={(e) => setAi({ baseUrl: e.target.value.trim() })} placeholder={preset.baseUrl} title="Any OpenAI-compatible gateway works here" />
-        </div>
+        {!isBuiltin && (
+          <div style={{ flex: 2, minWidth: 240 }}>
+            <label>API base URL</label>
+            <input value={ai.baseUrl} onChange={(e) => setAi({ baseUrl: e.target.value.trim() })} placeholder={preset.baseUrl} title="Any OpenAI-compatible gateway works here" />
+          </div>
+        )}
         {preset.needsKey && (
           <div style={{ flex: 3, minWidth: 240 }}>
             <label>API key</label>
@@ -597,7 +652,7 @@ function AiSection({ s, update, persist, setMsg }: SectionProps) {
 
       <h3 style={{ marginBottom: 0 }}>Step 3 — connect</h3>
       <div className="row" style={{ marginTop: 6 }}>
-        <button className="primary" onClick={connect} disabled={testing || !ready}>{testing ? 'Testing…' : 'Connect & test'}</button>
+        <button className="primary" onClick={isBuiltin ? testBuiltin : connect} disabled={testing || !ready}>{testing ? 'Testing…' : isBuiltin ? 'Check & enable' : 'Connect & test'}</button>
         <button onClick={() => persist()}>Save</button>
         {ok && <span className="ok">Model reachable: {ok}</span>}
         {!ready && <span className="muted">{preset.needsKey ? 'Enter the API key to enable' : 'Enter the base URL to enable'}</span>}

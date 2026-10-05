@@ -308,6 +308,8 @@ export default defineBackground(() => {
         return ai.apply(req.incidentId, req.fields);
       case 'tl:ai-projection':
         return ai.projection(req.incidentId);
+      case 'tl:ai-store':
+        return ai.store(req.incidentId, req.analysis);
       case 'tl:ai-test':
         return ai.testConnection(req.ai);
       case 'tl:start-synthetic-recording':

@@ -163,8 +163,8 @@ export interface ProviderPreset {
   /** Where to get a key; undefined when no key is needed. */
   keyUrl?: string;
   needsKey: boolean;
-  /** How JSON output is requested from an OpenAI-compatible endpoint. */
-  jsonMode: 'json_schema' | 'json_object' | 'native-gemini';
+  /** How JSON output is requested: OpenAI-compatible modes, Gemini's native API, or Chrome's on-device Prompt API. */
+  jsonMode: 'json_schema' | 'json_object' | 'native-gemini' | 'chrome-builtin';
   blurb: string;
   /** Data-handling note shown in the UI. */
   dataNote: string;
@@ -172,6 +172,18 @@ export interface ProviderPreset {
 }
 
 export const PROVIDER_PRESETS: ProviderPreset[] = [
+  {
+    id: 'chrome-builtin',
+    displayName: 'Chrome built-in AI (on-device, no key)',
+    tier: 'local',
+    baseUrl: '',
+    defaultModel: 'gemini-nano',
+    needsKey: false,
+    jsonMode: 'chrome-builtin',
+    blurb: 'Gemini Nano runs inside Chrome itself. No account, no key, no setup beyond a one-time model download by Chrome (≈2 GB). Needs Chrome 138+ on a machine with ~22 GB free disk and a capable GPU or CPU.',
+    dataNote: 'Nothing leaves this computer. Quality is good for rewriting steps and summaries; deeper analysis is weaker than hosted models.',
+    recommended: true,
+  },
   {
     id: 'gemini',
     displayName: 'Google Gemini (free tier)',
@@ -193,9 +205,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     keyUrl: 'https://console.groq.com/keys',
     needsKey: true,
     jsonMode: 'json_object',
-    blurb: 'Very fast hosted open models (Llama 3.3 70B) with a free tier that is enough for everyday bug writing.',
+    blurb: 'Very fast hosted open models (Llama 3.3 70B) with a free tier that is enough for everyday bug writing. Best fallback when the built-in model is unavailable on a device.',
     dataNote: 'Prompts are processed by Groq and, per their policy, not used to train models; check the policy for your organisation.',
-    recommended: true,
   },
   {
     id: 'openrouter',
@@ -429,10 +440,101 @@ async function sha256(s: string): Promise<string> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Chrome built-in AI (Prompt API, Gemini Nano on-device). No key, no network.
+// Available in extension pages (side panel, options) and, in recent Chrome, the service worker.
+// ---------------------------------------------------------------------------
+
+export type BuiltinAvailability = 'available' | 'downloadable' | 'downloading' | 'unavailable' | 'unsupported';
+
+interface LanguageModelSession {
+  prompt(input: string, options?: { responseConstraint?: unknown; signal?: AbortSignal }): Promise<string>;
+  destroy(): void;
+}
+interface LanguageModelStatic {
+  availability(options?: Record<string, unknown>): Promise<'available' | 'downloadable' | 'downloading' | 'unavailable'>;
+  create(options?: {
+    initialPrompts?: { role: 'system' | 'user' | 'assistant'; content: string }[];
+    temperature?: number;
+    topK?: number;
+    expectedOutputs?: { type: 'text'; languages?: string[] }[];
+    monitor?: (m: { addEventListener(type: 'downloadprogress', cb: (e: { loaded: number; total?: number }) => void): void }) => void;
+    signal?: AbortSignal;
+  }): Promise<LanguageModelSession>;
+}
+
+function builtinApi(): LanguageModelStatic | undefined {
+  const g = globalThis as unknown as { LanguageModel?: LanguageModelStatic };
+  return g.LanguageModel;
+}
+
+export class ChromeBuiltinProvider implements IAnalysisProvider {
+  readonly id = 'chrome-builtin';
+  readonly displayName = 'Chrome built-in AI';
+
+  static isSupportedHere(): boolean {
+    return Boolean(builtinApi());
+  }
+
+  static async availability(): Promise<BuiltinAvailability> {
+    const api = builtinApi();
+    if (!api) return 'unsupported';
+    try {
+      return await api.availability({ expectedOutputs: [{ type: 'text', languages: ['en'] }] });
+    } catch {
+      return 'unavailable';
+    }
+  }
+
+  /** Trigger the one-time model download (must be called from a user gesture in a page). */
+  static async download(onProgress?: (fraction: number) => void): Promise<void> {
+    const api = builtinApi();
+    if (!api) throw new Error('Chrome built-in AI is not supported in this context');
+    const session = await api.create({
+      expectedOutputs: [{ type: 'text', languages: ['en'] }],
+      monitor(m) {
+        m.addEventListener('downloadprogress', (e) => onProgress?.(e.total ? e.loaded / e.total : e.loaded));
+      },
+    });
+    session.destroy();
+  }
+
+  async analyze(input: AnalysisInput, cfg: AnalysisProviderConfig): Promise<Analysis> {
+    const api = builtinApi();
+    if (!api) throw new Error('RUN_IN_PAGE');
+    const avail = await ChromeBuiltinProvider.availability();
+    if (avail !== 'available') throw new Error(avail === 'downloadable' || avail === 'downloading' ? 'Chrome built-in model is not downloaded yet' : 'Chrome built-in AI is unavailable on this device');
+    const session = await api.create({ initialPrompts: [{ role: 'system', content: SYSTEM_PROMPT }], temperature: 0.2, topK: 3, expectedOutputs: [{ type: 'text', languages: ['en'] }] });
+    try {
+      // Keep the on-device prompt compact: Nano has a small context window.
+      const compact: AnalysisInput = { ...input, actions: input.actions.slice(-30), relatedRequests: input.relatedRequests.slice(0, 6), errors: input.errors.slice(-6), consoleErrors: input.consoleErrors.slice(-6) };
+      if (compact.focal?.responseSnippet) compact.focal.responseSnippet = compact.focal.responseSnippet.slice(0, 300);
+      if (compact.focal?.requestSnippet) compact.focal.requestSnippet = compact.focal.requestSnippet.slice(0, 300);
+      let text: string;
+      try {
+        text = await session.prompt(userPrompt(compact, false), { responseConstraint: ANALYSIS_JSON_SCHEMA });
+      } catch {
+        // older Chrome without responseConstraint: ask for JSON in the prompt instead
+        text = await session.prompt(userPrompt(compact, true));
+      }
+      return toAnalysis(text, this.id, cfg.model || 'gemini-nano', input);
+    } finally {
+      session.destroy();
+    }
+  }
+
+  async test(cfg: AnalysisProviderConfig) {
+    const avail = await ChromeBuiltinProvider.availability();
+    if (avail === 'available') return { ok: true as const, model: cfg.model || 'gemini-nano' };
+    throw new Error(avail === 'unsupported' ? 'Chrome built-in AI is not available in this browser (needs Chrome 138+)' : avail === 'downloadable' ? 'Model not downloaded yet — click Download' : avail === 'downloading' ? 'Model is downloading' : 'Unavailable on this device (hardware or disk requirements not met)');
+  }
+}
+
 /** Build the provider implementation for a preset id (any OpenAI-compatible gateway can reuse 'openai'/'ollama' style ids). */
 export function getProvider(id: string): IAnalysisProvider {
   const preset = getPreset(id);
   if (preset.jsonMode === 'native-gemini') return new GeminiProvider();
+  if (preset.jsonMode === 'chrome-builtin') return new ChromeBuiltinProvider();
   return new OpenAICompatibleProvider(preset.id, preset.displayName, preset.jsonMode, preset.needsKey);
 }
 

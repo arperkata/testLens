@@ -82,6 +82,7 @@ export type RuntimeRequest =
   | { type: 'tl:ai-enhance'; incidentId: string }
   | { type: 'tl:ai-apply'; incidentId: string; fields: ('summary' | 'stepsToReproduce' | 'expectedResult' | 'actualResult')[] }
   | { type: 'tl:ai-projection'; incidentId: string }
+  | { type: 'tl:ai-store'; incidentId: string; analysis: import('@testlens/schema').Analysis }
   | { type: 'tl:ai-test'; ai: import('./settings').AiSettings };
 
 /** Messages addressed to the offscreen recorder document (ignored by the background). */

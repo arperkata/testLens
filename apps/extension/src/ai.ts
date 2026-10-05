@@ -8,6 +8,7 @@ import { loadSettings, type AiSettings } from './settings';
 export type AiField = 'summary' | 'stepsToReproduce' | 'expectedResult' | 'actualResult';
 
 export async function ensureAiPermission(baseUrl: string) {
+  if (!baseUrl) return; // on-device provider: no network host involved
   const origin = `${new URL(baseUrl).origin}/*`;
   const has = await chrome.permissions.contains({ origins: [origin] });
   if (!has) throw new Error(`TestLens needs permission to call ${new URL(baseUrl).origin}. Grant it in TestLens settings (AI section).`);
@@ -37,6 +38,17 @@ export async function enhance(incidentId: string): Promise<StoredIncident> {
   const input = buildAnalysisInput(inc.context, inc.draft, { includeBodies: ai.includeBodies });
   const analysis = await provider.analyze(input, { apiKey: ai.apiKey, model: ai.model, baseUrl: ai.baseUrl });
   // recompose so the description gains the marked "AI analysis" section; tester fields are untouched
+  return recomposeIncident({ ...inc, context: { ...inc.context, analysis } });
+}
+
+/**
+ * Store an analysis computed in an extension page (Chrome's built-in model only exists in page
+ * contexts on some Chrome versions). The page sends the result here so the pipeline stays in one place.
+ */
+export async function store(incidentId: string, analysis: import('@testlens/schema').Analysis): Promise<StoredIncident> {
+  const inc = await getIncident(incidentId);
+  if (!inc?.context || !inc.draft) throw new Error('Incident is not ready');
+  if (analysis.provenance !== 'ai') throw new Error('Invalid analysis');
   return recomposeIncident({ ...inc, context: { ...inc.context, analysis } });
 }
 

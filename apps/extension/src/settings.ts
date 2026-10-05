@@ -37,8 +37,11 @@ export interface AiSettings {
   includeBodies: boolean;
 }
 
-/** Default to Groq's free tier; the UI fills baseUrl/model from the preset when the provider changes. */
-export const DEFAULT_AI: AiSettings = { enabled: false, provider: 'groq', apiKey: '', model: 'llama-3.3-70b-versatile', baseUrl: 'https://api.groq.com/openai/v1', autoRun: true, includeBodies: true };
+/**
+ * Default to Chrome's on-device model: no account, no key, nothing leaves the machine, so it can be
+ * enabled out of the box. The UI offers Groq (free tier) when a device cannot run it.
+ */
+export const DEFAULT_AI: AiSettings = { enabled: true, provider: 'chrome-builtin', apiKey: '', model: 'gemini-nano', baseUrl: '', autoRun: true, includeBodies: true };
 
 /** @deprecated pre-multi-tracker shape; migrated to `tracker` on load. */
 export type JiraSettings = Omit<TrackerSettings, 'trackerId' | 'projectName'>;

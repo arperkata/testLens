@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runEvidenceEngine } from '@testlens/evidence-engine';
 import { compose } from '@testlens/composer';
 import { fixture } from '../../evidence-engine/src/index.test';
-import { GeminiProvider, OpenAICompatibleProvider, PROVIDER_PRESETS, buildAnalysisInput, getPreset, getProvider } from './index';
+import { ChromeBuiltinProvider, GeminiProvider, OpenAICompatibleProvider, PROVIDER_PRESETS, buildAnalysisInput, getPreset, getProvider } from './index';
 
 const ctx = runEvidenceEngine(fixture());
 const draft = compose(ctx);
@@ -32,12 +32,13 @@ function mockFetch(handler: (url: string, init: RequestInit) => unknown) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('provider presets', () => {
-  it('lists free-tier providers and marks Groq as recommended', () => {
+  it('lists on-device and free-tier providers and recommends the built-in model', () => {
     const ids = PROVIDER_PRESETS.map((p) => p.id);
-    expect(ids).toEqual(expect.arrayContaining(['gemini', 'groq', 'openrouter', 'ollama', 'openai']));
+    expect(ids).toEqual(expect.arrayContaining(['chrome-builtin', 'gemini', 'groq', 'openrouter', 'ollama', 'openai']));
     expect(PROVIDER_PRESETS.filter((p) => p.tier === 'free').length).toBeGreaterThanOrEqual(3);
-    expect(PROVIDER_PRESETS.find((p) => p.recommended)?.id).toBe('groq');
+    expect(PROVIDER_PRESETS.find((p) => p.recommended)?.id).toBe('chrome-builtin');
     expect(getPreset('ollama').needsKey).toBe(false);
+    expect(getPreset('chrome-builtin').needsKey).toBe(false);
   });
   it('builds a provider for every preset', () => {
     for (const p of PROVIDER_PRESETS) expect(getProvider(p.id).id).toBe(p.id);
@@ -87,6 +88,56 @@ describe('OpenAI-compatible provider (Groq style, json_object mode)', () => {
   it('surfaces rate-limit errors readably', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { message: 'Rate limit reached' } }), { status: 429 })));
     await expect(getProvider('groq').analyze(input, { apiKey: 'k', model: 'm', baseUrl: 'https://api.groq.com/openai/v1' })).rejects.toThrow(/429.*quota/);
+  });
+});
+
+describe('Chrome built-in provider (on-device Prompt API)', () => {
+  it('reports unsupported when the API is absent and tells callers to run in a page', async () => {
+    vi.stubGlobal('LanguageModel', undefined);
+    expect(await ChromeBuiltinProvider.availability()).toBe('unsupported');
+    await expect(new ChromeBuiltinProvider().analyze(input, { apiKey: '', model: 'gemini-nano', baseUrl: '' })).rejects.toThrow('RUN_IN_PAGE');
+  });
+
+  it('uses a response constraint, compacts the prompt, and destroys the session', async () => {
+    const destroy = vi.fn();
+    const prompt = vi.fn(async (_text: string, opts?: { responseConstraint?: unknown }) => {
+      expect(opts?.responseConstraint).toBeDefined();
+      return JSON.stringify(answer);
+    });
+    const create = vi.fn(async (opts: { initialPrompts?: { role: string; content: string }[] }) => {
+      expect(opts.initialPrompts?.[0]?.role).toBe('system');
+      return { prompt, destroy };
+    });
+    vi.stubGlobal('LanguageModel', { availability: async () => 'available', create });
+    const a = await new ChromeBuiltinProvider().analyze(input, { apiKey: '', model: 'gemini-nano', baseUrl: '' });
+    expect(a.provider).toBe('chrome-builtin');
+    expect(a.model).toBe('gemini-nano');
+    expect(a.stepsToReproduce).toEqual(answer.stepsToReproduce);
+    expect(destroy).toHaveBeenCalledOnce();
+    const sentText = prompt.mock.calls[0]![0];
+    expect(sentText).toContain('Evidence (JSON)');
+    expect(sentText).not.toContain('matching this JSON Schema'); // constraint used, no schema-in-prompt
+  });
+
+  it('falls back to schema-in-prompt when responseConstraint is rejected', async () => {
+    let calls = 0;
+    const prompt = vi.fn(async (_text: string, opts?: { responseConstraint?: unknown }) => {
+      calls++;
+      if (opts?.responseConstraint) throw new TypeError('responseConstraint not supported');
+      return JSON.stringify(answer);
+    });
+    vi.stubGlobal('LanguageModel', { availability: async () => 'available', create: async () => ({ prompt, destroy: vi.fn() }) });
+    const a = await new ChromeBuiltinProvider().analyze(input, { apiKey: '', model: 'gemini-nano', baseUrl: '' });
+    expect(calls).toBe(2);
+    expect(prompt.mock.calls[1]![0]).toContain('matching this JSON Schema');
+    expect(a.summary).toBe(answer.summary);
+  });
+
+  it('refuses to run before the model is downloaded', async () => {
+    vi.stubGlobal('LanguageModel', { availability: async () => 'downloadable', create: vi.fn() });
+    await expect(new ChromeBuiltinProvider().analyze(input, { apiKey: '', model: 'gemini-nano', baseUrl: '' })).rejects.toThrow(/not downloaded yet/);
+    expect(getPreset('chrome-builtin').recommended).toBe(true);
+    expect(PROVIDER_PRESETS.filter((p) => p.recommended).length).toBe(1);
   });
 });
 

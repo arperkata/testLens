@@ -134,8 +134,11 @@ export async function finalizeIncident(incidentId: string): Promise<StoredIncide
       void import('./ai')
         .then((m) => m.enhance(incidentId))
         .catch(async (e) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          // Chrome's on-device model may only be reachable from extension pages; the side panel runs it then.
+          if (msg === 'RUN_IN_PAGE' || /not downloaded yet/.test(msg)) return;
           const cur = await getIncident(incidentId);
-          if (cur) await putIncident({ ...cur, warnings: [...(cur.warnings ?? []), `AI analysis failed: ${e instanceof Error ? e.message : String(e)}`] });
+          if (cur) await putIncident({ ...cur, warnings: [...(cur.warnings ?? []), `AI analysis failed: ${msg}`] });
         });
     }
     return getIncident(incidentId);
