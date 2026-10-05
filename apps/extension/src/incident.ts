@@ -11,7 +11,8 @@ import { getBlob, getIncident, putBlob, putIncident, readRrweb, readVideoSegment
 import { loadSettings, type Settings } from './settings';
 import type { IncidentPatch, PageInfo } from './messages';
 import { renderViewerHtml } from './viewer-template';
-import { flushRecording } from './recording';
+import { flushRecording, stopRecording } from './recording';
+import { stitchWebm } from './video/stitch';
 
 function hhmmss(ts: number) {
   const d = new Date(ts);
@@ -88,15 +89,29 @@ export async function finalizeIncident(incidentId: string): Promise<StoredIncide
     const def = (kind: string) => settings.attachDefaults[kind] ?? true;
     if (shot) artifacts.push(artifact(`${incidentId}:screenshot`, 'screenshot', 'screenshot.png', 'image/png', shot.size, 'not-applicable', undefined, def('screenshot')));
 
-    // video segments overlapping the window become one artifact each (segments are independently playable)
+    // Video: stitch the segments overlapping the window into ONE playable file (no re-encoding).
+    // If stitching fails for any reason, fall back to attaching the segments individually.
     const segments = await readVideoSegments(inc.tabId, start, end);
-    for (let i = 0; i < segments.length; i++) {
-      const seg = segments[i]!;
-      const id = `${incidentId}:video:${i + 1}`;
-      await putBlob(id, incidentId, seg.blob);
-      const name = `recording-${String(i + 1).padStart(2, '0')}_${hhmmss(seg.start)}-${hhmmss(seg.end)}.webm`;
-      artifacts.push(artifact(id, 'video', name, seg.mime || 'video/webm', seg.blob.size, 'unredacted', { start: seg.start, end: seg.end }, def('video')));
+    if (segments.length) {
+      try {
+        const stitched = await stitchWebm(segments.map((s) => ({ blob: s.blob, start: s.start, end: s.end })));
+        const id = `${incidentId}:video`;
+        await putBlob(id, incidentId, stitched.blob);
+        const name = `recording_${hhmmss(stitched.start)}-${hhmmss(stitched.end)}.webm`;
+        artifacts.push(artifact(id, 'video', name, 'video/webm', stitched.blob.size, 'unredacted', { start: stitched.start, end: stitched.end }, def('video')));
+      } catch (e) {
+        inc.warnings = [...(inc.warnings ?? []), `Video stitching failed (${e instanceof Error ? e.message : String(e)}); attaching ${segments.length} segment(s) instead`];
+        for (let i = 0; i < segments.length; i++) {
+          const seg = segments[i]!;
+          const id = `${incidentId}:video:${i + 1}`;
+          await putBlob(id, incidentId, seg.blob);
+          const name = `recording-${String(i + 1).padStart(2, '0')}_${hhmmss(seg.start)}-${hhmmss(seg.end)}.webm`;
+          artifacts.push(artifact(id, 'video', name, seg.mime || 'video/webm', seg.blob.size, 'unredacted', { start: seg.start, end: seg.end }, def('video')));
+        }
+      }
     }
+    // Optionally stop the tab recording once the incident has its footage (default: keep rolling for the next issue).
+    if (settings.stopVideoAfterReport) void stopRecording(inc.tabId);
     if (rr.length) {
       const rrBlob = new Blob([JSON.stringify(rr)], { type: 'application/json' });
       await putBlob(`${incidentId}:rrweb`, incidentId, rrBlob);

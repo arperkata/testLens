@@ -218,6 +218,10 @@ function CaptureSection({ s, update, persist }: SectionProps) {
         <b>Tab video</b>: Chrome only allows video capture after TestLens has been opened on the tab. With the option below, opening the popup on a monitored tab starts the rolling recording automatically (60-second segments, kept for ~7 minutes, until the tab closes). DOM replay and the screenshot are always captured regardless.
       </p>
       <label className="inline"><input type="checkbox" checked={s.autoRecordOnOpen} onChange={(e) => update({ autoRecordOnOpen: e.target.checked })} /> Start tab video automatically when I open TestLens on a monitored tab</label>
+      <label className="inline" title="By default the recorder keeps rolling after Report Issue (only the last ~7 minutes are kept) so a second issue can be reported without re-arming. Tick to stop it once the incident has its footage.">
+        <input type="checkbox" checked={s.stopVideoAfterReport} onChange={(e) => update({ stopVideoAfterReport: e.target.checked })} /> Stop tab video after Report Issue
+      </label>
+      <p className="muted" style={{ marginTop: 4 }}>Footage inside the incident window is stitched into a single <code>recording.webm</code>. The rolling recorder itself keeps only the last ~7 minutes and never attaches anything outside the incident window.</p>
 
       <h3>Default attachments</h3>
       <p className="muted" style={{ marginTop: 0 }}>Everything is always captured. These are only the files pre-ticked for the bug; you can change each one on the Evidence and Tracker tabs before Create.</p>

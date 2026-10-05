@@ -67,6 +67,8 @@ export interface Settings {
   retentionDays: number;
   /** Start tab video automatically when the popup is opened on a monitored tab (Chrome needs that invocation). */
   autoRecordOnOpen: boolean;
+  /** Stop the tab recording once an incident has taken its footage (default: keep rolling for the next issue). */
+  stopVideoAfterReport: boolean;
   /** Which artifact kinds are pre-ticked for attachment; the tester can still change each one before Create. */
   attachDefaults: Record<string, boolean>;
   tracker?: TrackerSettings;
@@ -93,6 +95,7 @@ export const DEFAULT_SETTINGS: Settings = {
   telemetryHostsExtra: [],
   retentionDays: 7,
   autoRecordOnOpen: true,
+  stopVideoAfterReport: false,
   attachDefaults: { screenshot: true, video: true, rrweb: true, 'console-log': true, 'network-log': true, 'har-focused': true, har: false, 'incident-viewer': true },
   ai: DEFAULT_AI,
   onboarded: false,

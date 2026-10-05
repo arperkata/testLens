@@ -244,7 +244,7 @@ traceparent  = https://tempo.example.com/trace/{value}
 
 ## 5. Daily use
 
-1. Test normally in a monitored tab. The popup shows the live buffer: requests, console lines, errors, actions and whether replay is recording. Opening the popup on a monitored tab also starts the rolling **tab video** automatically (Chrome requires TestLens to have been opened on the tab once; the setting *Start tab video automatically* controls this). Recording continues in the background until the tab closes or you click **Stop video**. Everything is captured; what gets attached is decided at creation time.
+1. Test normally in a monitored tab. The popup shows the live buffer: requests, console lines, errors, actions and whether replay is recording. Opening the popup on a monitored tab also starts the rolling **tab video** automatically (Chrome requires TestLens to have been opened on the tab once; the setting *Start tab video automatically* controls this). Recording continues in the background until the tab closes or you click **Stop video**; by design it keeps rolling after Report Issue so a second issue can be reported without re-arming, and only the last ~7 minutes are ever kept. Tick *Stop tab video after Report Issue* in Settings → Capture if you prefer it to stop. An incident receives only the footage inside its window, as one stitched file. Everything is captured; what gets attached is decided at creation time.
    To change a monitored entry later, use **edit** next to it in Settings → Monitored sites, for example to widen `https://host:port` to the whole domain, then **Apply monitoring**.
 2. When something goes wrong, click the TestLens icon. Optionally type what you saw in **What went wrong?**. Click **Report Issue**.
 3. The side panel opens on that tab only. It shows "Evidence preserved" while the post-click window runs, then the composed bug.
@@ -280,7 +280,7 @@ TestLens cannot run on `chrome://` pages, the Chrome Web Store, other extensions
 |---|---|---|
 | `screenshot.png` | viewport at Report Issue | yes |
 | `replay.rrweb.json` | DOM replay for the window | yes |
-| `recording-NN_hhmmss-hhmmss.webm` | tab video segments overlapping the window, one file per 60 s segment (only when **Record this tab** was on) | yes |
+| `recording_hhmmss-hhmmss.webm` | the tab video for the incident window, stitched from the rolling 60 s segments into one playable file without re-encoding (only when tab video was on). If stitching ever fails, the segments are attached individually as `recording-NN_….webm` and a warning says so | yes |
 | `console.log` | console and errors in time order with the Report Issue marker | yes |
 | `network.log` | index of every request, then full request headers / payload / response headers / body for API and failed requests, correlation ids marked `>>>` | yes |
 | `network-focused.har` | HAR 1.2 of the selected evidence requests, with bodies | yes |

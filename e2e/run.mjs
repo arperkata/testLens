@@ -209,8 +209,11 @@ try {
     check(kinds.includes('rrweb'), 'rrweb artifact');
     check(kinds.includes('har-focused') && kinds.includes('console-log') && kinds.includes('incident-viewer'), `text artifacts (${kinds.join(',')})`);
     const vids = ctx.artifacts.filter((a) => a.kind === 'video');
-    check(vids.length >= 1, `video segments attached (${vids.length}: ${vids.map((v) => `${v.fileName} ${Math.round(v.bytes / 1024)}KB`).join(', ')})`);
-    check(vids.every((v) => v.bytes > 1000 && v.mime.startsWith('video/webm')), 'video segments are non-empty WebM files');
+    check(vids.length === 1, `one stitched video attached (${vids.map((v) => `${v.fileName} ${Math.round(v.bytes / 1024)}KB`).join(', ')})`);
+    check(vids.every((v) => v.bytes > 1000 && v.mime.startsWith('video/webm')), 'video is a non-empty WebM file');
+    const span = vids[0]?.timeRange ? (vids[0].timeRange.end - vids[0].timeRange.start) / 1000 : 0;
+    check(span >= 6, `stitched video spans the segments (${span.toFixed(1)}s)`);
+    check(!(inc.warnings ?? []).some((w) => w.includes('stitching failed')), 'no stitching fallback warning');
     check(!ctx.evidence.captureQuality.notes.some((n) => n.includes('no pixel video')), 'capture quality no longer reports missing video');
     check(ctx.evidence?.observations.some((o) => o.includes('succeeded 2 time(s)')), 'success-then-fail observation');
     check(ctx.evidence?.items.some((i) => i.kind === 'interaction' && i.reasons.join().includes('likely cause')), 'click→request causality detected');
@@ -276,10 +279,27 @@ try {
     check((await panel.locator('mark').count()) > 0, 'correlation id highlighted in detail view');
   }
   const videoEls = panel.locator('video');
-  check((await videoEls.count()) >= 1, `evidence tab shows video player(s) (${await videoEls.count()})`);
+  check((await videoEls.count()) === 1, `evidence tab shows a single video player (${await videoEls.count()})`);
   if (await videoEls.count()) {
-    const playable = await videoEls.first().evaluate((v) => new Promise((resolve) => { const el = v; if (el.readyState >= 1) return resolve(true); el.onloadedmetadata = () => resolve(true); el.onerror = () => resolve(false); setTimeout(() => resolve(el.readyState >= 1), 5000); }));
-    check(playable === true, 'first video segment loads metadata (decodable WebM)');
+    const info = await videoEls.first().evaluate((v) => new Promise((resolve) => {
+      const el = v;
+      const done = () => resolve({ ok: el.readyState >= 1, duration: el.duration, w: el.videoWidth, h: el.videoHeight });
+      if (el.readyState >= 1) return done();
+      el.onloadedmetadata = done;
+      el.onerror = () => resolve({ ok: false });
+      setTimeout(done, 5000);
+    }));
+    check(info.ok === true, `stitched video loads metadata (decodable WebM, ${info.w}x${info.h})`);
+    // seek to the end so the browser decodes across the segment joins
+    const seek = await videoEls.first().evaluate((v) => new Promise((resolve) => {
+      const el = v;
+      const target = Number.isFinite(el.duration) ? el.duration - 0.2 : 8;
+      el.onseeked = () => resolve({ ok: true, t: el.currentTime });
+      el.onerror = () => resolve({ ok: false });
+      el.currentTime = target;
+      setTimeout(() => resolve({ ok: el.currentTime > 5, t: el.currentTime }), 5000);
+    }));
+    check(seek.ok === true, `video seeks across the joins (to ${Number(seek.t).toFixed(1)}s)`);
   }
   await panel.screenshot({ path: path.join(outDir, 'sidepanel-evidence.png'), fullPage: true });
   // Jira tab: destination comes from settings and can be changed per incident
