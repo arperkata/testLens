@@ -1,5 +1,7 @@
 # TestLens (TL)
 
+<img src="docs/logo.png" alt="TestLens" width="220" align="right">
+
 **You saw the bug. TestLens saw everything.**
 
 TestLens is a testing flight recorder. It keeps a rolling 5-minute buffer of console output, JavaScript errors, network traffic, user interactions, navigation and a DOM replay for the sites a tester chooses. When something goes wrong the tester clicks **Report Issue**; TestLens freezes the evidence, picks the most relevant failure, composes a bug with steps, expected/actual and attachments, and lets the tester review and create the Jira issue. Nothing is created in Jira without an explicit click.
