@@ -64,6 +64,7 @@ export type RuntimeRequest =
   | { type: 'tl:rerun-engine'; incidentId: string; focal?: { kind: 'exchange' | 'error' | 'assertion' | 'console'; refId: string } }
   | { type: 'tl:get-blob'; blobId: string }
   | { type: 'tl:apply-monitoring' }
+  | { type: 'tl:enable-panel'; tabId: number }
   | { type: 'tl:jira-test'; }
   | { type: 'tl:jira-projects' }
   | { type: 'tl:jira-issue-types'; projectKey: string }

@@ -84,4 +84,7 @@ table { width: 100%; border-collapse: collapse; }
 td, th { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { color: var(--muted); font-weight: 500; }
 .steps li { margin: 2px 0; }
+mark { background: rgba(255, 176, 32, 0.25); color: var(--warn); border-radius: 3px; padding: 0 2px; font-weight: 600; }
+tr.corr td { background: rgba(255, 176, 32, 0.08); }
+tr.corr td:first-child { color: var(--warn) !important; font-weight: 600; }
 .toast { position: fixed; bottom: 12px; left: 12px; right: 12px; background: var(--panel2); border: 1px solid var(--line); padding: 10px; border-radius: 8px; z-index: 10; }

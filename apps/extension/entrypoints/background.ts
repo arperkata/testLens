@@ -168,6 +168,11 @@ export default defineBackground(() => {
     }
   });
 
+  /** Make the review side panel available on one tab only. */
+  async function enablePanel(tabId: number) {
+    await chrome.sidePanel.setOptions({ tabId, path: 'sidepanel.html', enabled: true });
+  }
+
   // ---------------- runtime API ----------------
   chrome.runtime.onMessage.addListener((req: RuntimeRequest, _sender, sendResponse: (r: RuntimeResponse) => void) => {
     void (async () => {
@@ -190,10 +195,14 @@ export default defineBackground(() => {
         return cfg;
       }
       case 'tl:report-issue': {
+        await enablePanel(req.tabId);
         const inc = await startIncident(req.tabId, req.note);
         await chrome.storage.session.set({ 'tl.activeIncident': inc.incidentId });
         return inc;
       }
+      case 'tl:enable-panel':
+        await enablePanel(req.tabId);
+        return true;
       case 'tl:get-tab-status': {
         const tab = await chrome.tabs.get(req.tabId).catch(() => undefined);
         const { counts, oldest } = await tabCounts(req.tabId);

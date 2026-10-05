@@ -14,7 +14,8 @@ export default defineConfig({
     version: '0.1.0',
     minimum_chrome_version: '116',
     action: { default_title: 'TestLens — Report Issue' },
-    side_panel: { default_path: 'sidepanel.html' },
+    // No global side_panel.default_path: the panel is enabled per tab (chrome.sidePanel.setOptions)
+    // so it only appears on the tab where the tester opened TestLens, never in other windows.
     options_ui: { page: 'options.html', open_in_tab: true },
     permissions: ['storage', 'unlimitedStorage', 'tabs', 'webRequest', 'scripting', 'alarms', 'sidePanel', 'activeTab', 'webNavigation'],
     // Host access is requested at runtime, per origin the tester chooses to monitor (plus the Jira site).
@@ -31,6 +32,10 @@ export default defineConfig({
       // (<all_urls> also lets captureVisibleTab run without the activeTab grant a real toolbar click provides.)
       if (process.env.TL_E2E === '1') (manifest as { host_permissions?: string[] }).host_permissions = ['<all_urls>'];
       (manifest as { options_ui?: { page: string; open_in_tab?: boolean } }).options_ui = { page: 'options.html', open_in_tab: true };
+      // WXT registers sidepanel.html globally; we enable it per tab at runtime instead.
+      delete (manifest as { side_panel?: unknown }).side_panel;
+      const m = manifest as { icons?: Record<string, string>; action?: Record<string, unknown> };
+      if (m.icons && m.action) m.action.default_icon = { '16': m.icons['16'], '32': m.icons['32'], '48': m.icons['48'], '128': m.icons['128'] };
     },
   },
 });

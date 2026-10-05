@@ -208,15 +208,14 @@ export function exchangeBlock(e: HttpExchange, maxBody: number) {
   lines.push(`${e.method.toUpperCase()} ${e.url}`);
   lines.push(`→ ${e.error ? `FAILED ${e.error.kind}${e.error.message ? `: ${e.error.message}` : ''}` : `HTTP ${e.response?.status}${e.response?.statusText ? ` ${e.response.statusText}` : ''}`}${e.timing ? `  (${Math.round(e.timing.totalMs)} ms)` : ''}`);
   lines.push(`at ${new Date(e.ts).toISOString()}${e.initiator ? `  initiator: ${e.initiator.type}` : ''}`);
-  if (e.correlationIds.length) lines.push(`correlation: ${e.correlationIds.map((c) => `${c.header}=${c.value}`).join(', ')}`);
-  const interesting = (h: { name: string }) => /^(content-type|accept|x-|traceparent|request-id|cf-ray|retry-after|location|www-authenticate)/i.test(h.name) || h.name.toLowerCase() === 'authorization' || h.name.toLowerCase() === 'cookie';
-  const reqH = e.request.headers.filter(interesting);
-  if (reqH.length) lines.push('', 'request headers:', ...reqH.map((h) => `  ${h.name}: ${h.value}`));
-  if (e.request.body) lines.push('', `request body (${e.bodyCapture.request}${e.request.body.mimeType ? `, ${e.request.body.mimeType}` : ''}):`, indent(preview(e.request.body.data, maxBody)));
+  if (e.correlationIds.length) lines.push(`>>> correlation: ${e.correlationIds.map((c) => `${c.header}=${c.value}`).join(', ')}`);
+  const corr = new Set(e.correlationIds.map((c) => c.header.toLowerCase()));
+  const hdr = (hs: { name: string; value: string }[]) => (hs.length ? hs.map((h) => `${corr.has(h.name.toLowerCase()) ? '>>> ' : '    '}${h.name}: ${h.value}`) : ['    (none captured)']);
+  lines.push('', '--- request headers', ...hdr(e.request.headers));
+  lines.push('', `--- request payload (${e.bodyCapture.request}${e.request.body?.mimeType ? `, ${e.request.body.mimeType}` : ''})`, indent(e.request.body ? preview(e.request.body.data, maxBody) : `<${e.bodyCapture.request}>`));
   if (e.response) {
-    const resH = e.response.headers.filter(interesting);
-    if (resH.length) lines.push('', 'response headers:', ...resH.map((h) => `  ${h.name}: ${h.value}`));
-    lines.push('', `response body (${e.bodyCapture.response}${e.response.mimeType ? `, ${e.response.mimeType}` : ''}):`, indent(e.response.body ? preview(e.response.body.data, maxBody) : `<${e.bodyCapture.response}>`));
+    lines.push('', `--- response headers (${e.response.status})`, ...hdr(e.response.headers));
+    lines.push('', `--- response body (${e.bodyCapture.response}${e.response.mimeType ? `, ${e.response.mimeType}` : ''})`, indent(e.response.body ? preview(e.response.body.data, maxBody) : `<${e.bodyCapture.response}>`));
   }
   return lines.join('\n');
 }

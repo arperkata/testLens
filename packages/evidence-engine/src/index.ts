@@ -460,15 +460,46 @@ export function buildConsoleLog(ctx: BugContext): string {
   return lines.join('\n');
 }
 
-export function buildNetworkLog(ctx: BugContext): string {
-  const lines: string[] = [`# TestLens network log — incident ${ctx.incidentId}`, '# time | status | method | url | duration | initiator | flags', ''];
+/**
+ * Human-readable network log: an index of every request, then a full block per
+ * selected/API request with request headers, payload, response headers and body.
+ * Correlation ids are marked with ">>>" so they stand out in any text viewer.
+ */
+export function buildNetworkLog(ctx: BugContext, opts: { maxBodyChars?: number; detailIds?: Set<string> } = {}): string {
+  const maxBody = opts.maxBodyChars ?? 20_000;
   const sorted = [...ctx.exchanges].sort((a, b) => a.ts - b.ts);
+  const focalId = ctx.evidence?.focal?.kind === 'exchange' ? ctx.evidence.focal.refId : undefined;
+  const detail = opts.detailIds ?? new Set(sorted.filter((e) => e.classification.isApi || e.error || (e.response && e.response.status >= 400) || e.id === focalId).map((e) => e.id));
+
+  const lines: string[] = [`# TestLens network log — incident ${ctx.incidentId}`, `# Report Issue at ${iso(ctx.trigger.at)} | ${sorted.length} requests | ${detail.size} with full detail below`, '', '## INDEX', '# time | status | method | url | duration | initiator | flags', ''];
   for (const e of sorted) {
-    const flags = [e.classification.isApi ? 'api' : '', e.classification.isStatic ? 'static' : '', e.classification.isTelemetry ? 'telemetry' : '', e.classification.isPolling ? 'polling' : '', e.correlationIds.length ? `corr=${e.correlationIds.map((c) => c.value).join(',')}` : '']
+    const flags = [e.id === focalId ? 'FOCAL' : '', e.classification.isApi ? 'api' : '', e.classification.isStatic ? 'static' : '', e.classification.isTelemetry ? 'telemetry' : '', e.classification.isPolling ? 'polling' : '', e.correlationIds.length ? `>>> ${e.correlationIds.map((c) => `${c.header}=${c.value}`).join(',')}` : '']
       .filter(Boolean)
       .join(' ');
     const status = e.error ? `ERR(${e.error.kind})` : String(e.response?.status ?? '-');
     lines.push(`${iso(e.ts)} | ${status.padEnd(9)} | ${e.method.padEnd(6)} | ${e.url} | ${e.timing ? `${Math.round(e.timing.totalMs)}ms` : '-'} | ${e.initiator?.type ?? '-'} | ${flags}`);
+  }
+
+  lines.push('', '## DETAIL', '');
+  for (const e of sorted) {
+    if (!detail.has(e.id)) continue;
+    const corr = new Set(e.correlationIds.map((c) => c.header.toLowerCase()));
+    const hdr = (hs: { name: string; value: string }[]) => (hs.length ? hs.map((h) => `${corr.has(h.name.toLowerCase()) ? '>>> ' : '    '}${h.name}: ${h.value}`) : ['    (none captured)']);
+    const body = (b: HttpExchange['request']['body'], status: string) => {
+      if (!b || b.encoding === 'base64') return [`    <${status}>`];
+      const text = b.data.length > maxBody ? `${b.data.slice(0, maxBody)}\n    … ${b.data.length - maxBody} more chars (see HAR)` : b.data;
+      return text.split('\n').map((l) => `    ${l}`);
+    };
+    lines.push('='.repeat(100));
+    lines.push(`${e.id === focalId ? '[FOCAL] ' : ''}${e.method} ${e.url}`);
+    lines.push(`${iso(e.ts)}  ${e.error ? `FAILED ${e.error.kind}${e.error.message ? `: ${e.error.message}` : ''}` : `HTTP ${e.response?.status}${e.response?.statusText ? ` ${e.response.statusText}` : ''}`}${e.timing ? `  ${Math.round(e.timing.totalMs)} ms` : ''}  initiator=${e.initiator?.type ?? '-'}`);
+    if (e.correlationIds.length) lines.push(`>>> correlation: ${e.correlationIds.map((c) => `${c.header}=${c.value}`).join(', ')}`);
+    lines.push('', '--- request headers', ...hdr(e.request.headers));
+    lines.push('', `--- request payload (${e.bodyCapture.request}${e.request.body?.mimeType ? `, ${e.request.body.mimeType}` : ''})`, ...body(e.request.body, e.bodyCapture.request));
+    lines.push('', `--- response headers${e.response ? ` (${e.response.status})` : ''}`, ...hdr(e.response?.headers ?? []));
+    lines.push('', `--- response body (${e.bodyCapture.response}${e.response?.mimeType ? `, ${e.response.mimeType}` : ''})`, ...body(e.response?.body, e.bodyCapture.response));
+    if (e.initiator?.stack) lines.push('', '--- initiator stack', ...e.initiator.stack.split('\n').map((l) => `    ${l}`));
+    lines.push('');
   }
   return lines.join('\n');
 }

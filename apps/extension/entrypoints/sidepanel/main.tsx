@@ -27,6 +27,9 @@ function App() {
   useEffect(() => {
     void (async () => {
       await refreshList();
+      // popped-out window: ?incident=<id>; side panel: last reported incident
+      const fromUrl = new URLSearchParams(location.search).get('incident');
+      if (fromUrl) return setActiveId(fromUrl);
       const r = await chrome.storage.session.get('tl.activeIncident');
       const id = r['tl.activeIncident'] as string | undefined;
       if (id) setActiveId(id);
@@ -154,7 +157,14 @@ function IncidentView({ incident, onBack, reload, setIncident }: { incident: Inc
     <div style={{ padding: 12, paddingBottom: 60 }}>
       <div className="row between">
         <button className="small" onClick={onBack}>← Incidents</button>
-        <span className="muted mono">{incident.incidentId}</span>
+        <span className="row" style={{ gap: 6 }}>
+          <span className="muted mono">{incident.incidentId}</span>
+          {!new URLSearchParams(location.search).get('incident') && (
+            <button className="small" title="Open this review in its own window" onClick={() => void chrome.windows.create({ url: chrome.runtime.getURL(`sidepanel.html?incident=${incident.incidentId}`), type: 'popup', width: 560, height: 900 })}>
+              ⧉ Pop out
+            </button>
+          )}
+        </span>
       </div>
       <div className="row between" style={{ marginTop: 8 }}>
         <span className="muted">{new Date(incident.triggerAt).toLocaleString()}</span>
@@ -291,6 +301,7 @@ function BugTab({ ctx, draft, incident, onPatch, onRerun }: { ctx: BugContext; d
 function EvidenceTab({ ctx, incident, onPatch }: { ctx: BugContext; incident: Incident; onPatch: (p: import('../../src/messages').IncidentPatch) => void }) {
   const [shot, setShot] = useState<string>();
   const [showAll, setShowAll] = useState(false);
+  const [expanded, setExpanded] = useState<string>();
   useEffect(() => {
     const a = ctx.artifacts.find((x) => x.kind === 'screenshot');
     if (!a) return;
@@ -376,17 +387,24 @@ function EvidenceTab({ ctx, incident, onPatch }: { ctx: BugContext; incident: In
         <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> show low-relevance items
       </label>
       <div className="list">
-        {visible.map((it) => (
-          <div key={`${it.kind}:${it.refId}`} className={`item ${it.include ? '' : 'off'} ${ctx.evidence?.focal?.refId === it.refId ? 'focal' : ''}`}>
-            <input type="checkbox" checked={it.include} onChange={(e) => onPatch({ itemIncludes: { [`${it.kind}:${it.refId}`]: e.target.checked } })} />
-            <div className="body">
-              <div className="title mono">
-                <span className="muted">{tsFor(it) ? rel(tsFor(it)!, ctx.trigger.at) : ''}</span> {labelFor(it)}
+        {visible.map((it) => {
+          const key = `${it.kind}:${it.refId}`;
+          const ex = it.kind === 'exchange' ? ctx.exchanges.find((x) => x.id === it.refId) : undefined;
+          const open = expanded === key;
+          return (
+            <div key={key} className={`item ${it.include ? '' : 'off'} ${ctx.evidence?.focal?.refId === it.refId ? 'focal' : ''}`} style={{ flexWrap: 'wrap' }}>
+              <input type="checkbox" checked={it.include} onChange={(e) => onPatch({ itemIncludes: { [key]: e.target.checked } })} />
+              <div className="body" style={{ cursor: ex ? 'pointer' : 'default' }} onClick={() => ex && setExpanded(open ? undefined : key)}>
+                <div className="title mono">
+                  <span className="muted">{tsFor(it) ? rel(tsFor(it)!, ctx.trigger.at) : ''}</span> {labelFor(it)}
+                  {ex && <span className="badge">{open ? '▾ hide' : '▸ details'}</span>}
+                </div>
+                <div className="reasons">[{it.score}] {it.reasons.join(' · ')}</div>
               </div>
-              <div className="reasons">[{it.score}] {it.reasons.join(' · ')}</div>
+              {ex && open && <ExchangeDetail ex={ex} />}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       {ctx.evidence?.observations.length ? (
         <>
@@ -396,6 +414,72 @@ function EvidenceTab({ ctx, incident, onPatch }: { ctx: BugContext; incident: In
       ) : null}
     </>
   );
+}
+
+// ---------------------------------------------------------------------------
+
+/** Full request/response view for one exchange; correlation ids are highlighted wherever they appear. */
+function ExchangeDetail({ ex }: { ex: import('@testlens/schema').HttpExchange }) {
+  const corrHeaders = new Set(ex.correlationIds.map((c) => c.header.toLowerCase()));
+  const corrValues = ex.correlationIds.map((c) => c.value).filter(Boolean);
+  const hl = (text: string) => {
+    if (!corrValues.length) return text;
+    const parts = text.split(new RegExp(`(${corrValues.map((v) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'g'));
+    return parts.map((p, i) => (corrValues.includes(p) ? <mark key={i}>{p}</mark> : p));
+  };
+  const headers = (hs: { name: string; value: string }[]) =>
+    hs.length ? (
+      <table className="mono" style={{ fontSize: 11 }}>
+        <tbody>
+          {hs.map((h, i) => (
+            <tr key={i} className={corrHeaders.has(h.name.toLowerCase()) ? 'corr' : ''}>
+              <td style={{ whiteSpace: 'nowrap', color: 'var(--muted)' }}>{h.name}</td>
+              <td style={{ wordBreak: 'break-all' }}>{hl(h.value)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    ) : (
+      <span className="muted">none captured</span>
+    );
+  const body = (b: import('@testlens/schema').Body | undefined, status: string) =>
+    b && b.encoding !== 'base64' ? <pre style={{ maxHeight: 220 }}>{hl(pretty(b.data))}{b.truncated ? '\n… truncated' : ''}</pre> : <span className="muted">&lt;{status}&gt;</span>;
+  return (
+    <div style={{ flexBasis: '100%', marginTop: 6, borderTop: '1px solid var(--line)', paddingTop: 6 }}>
+      <div className="mono" style={{ wordBreak: 'break-all' }}>
+        {ex.method} {hl(ex.url)}
+        {ex.timing && <span className="badge">{Math.round(ex.timing.totalMs)} ms</span>}
+        {ex.error && <span className="badge err">{ex.error.kind}{ex.error.message ? `: ${ex.error.message}` : ''}</span>}
+      </div>
+      {ex.correlationIds.length > 0 && (
+        <div style={{ margin: '4px 0' }}>
+          correlation: {ex.correlationIds.map((c) => <span key={c.header + c.value} className="mono"><mark>{c.header}={c.value}</mark>{' '}</span>)}
+        </div>
+      )}
+      <h3>Request headers</h3>
+      {headers(ex.request.headers)}
+      <h3>Request payload <span className="badge">{ex.bodyCapture.request}</span></h3>
+      {body(ex.request.body, ex.bodyCapture.request)}
+      <h3>Response headers {ex.response && <span className="badge">{ex.response.status}</span>}</h3>
+      {headers(ex.response?.headers ?? [])}
+      <h3>Response body <span className="badge">{ex.bodyCapture.response}</span></h3>
+      {body(ex.response?.body, ex.bodyCapture.response)}
+      {ex.initiator?.stack && (
+        <>
+          <h3>Initiator</h3>
+          <pre style={{ maxHeight: 120 }}>{ex.initiator.stack}</pre>
+        </>
+      )}
+    </div>
+  );
+}
+
+function pretty(s: string) {
+  try {
+    return JSON.stringify(JSON.parse(s), null, 2);
+  } catch {
+    return s;
+  }
 }
 
 // ---------------------------------------------------------------------------

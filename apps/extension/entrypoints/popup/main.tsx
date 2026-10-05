@@ -58,7 +58,10 @@ function Popup() {
   };
 
   const openPanel = async () => {
-    if (tab?.id !== undefined) await chrome.sidePanel.open({ tabId: tab.id });
+    if (tab?.id !== undefined) {
+      await sendRuntime({ type: 'tl:enable-panel', tabId: tab.id });
+      await chrome.sidePanel.open({ tabId: tab.id });
+    }
     window.close();
   };
 

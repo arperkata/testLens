@@ -208,7 +208,7 @@ try {
 
     // save the viewer & screenshot for manual inspection
     if (inc.warnings?.length) console.log('  warnings:', inc.warnings.join(' | '));
-    for (const kind of ['incident-viewer', 'screenshot', 'har-focused']) {
+    for (const kind of ['incident-viewer', 'screenshot', 'har-focused', 'network-log']) {
       const a = ctx.artifacts.find((x) => x.kind === kind);
       if (!a) continue;
       const b = await cfgPage.evaluate((ref) => chrome.runtime.sendMessage({ type: 'tl:get-blob', blobId: ref }), a.storage.ref);
@@ -248,6 +248,18 @@ try {
   const panelText = await panel.textContent('body');
   check(panelText.includes('Focal event') || panelText.includes('Incidents'), 'side panel renders');
   await panel.screenshot({ path: path.join(outDir, 'sidepanel.png'), fullPage: true });
+  // Evidence tab: expand the focal exchange to verify the request/response detail view
+  await panel.click('.tabs button:nth-child(2)');
+  await panel.waitForTimeout(500);
+  const focalItem = panel.locator('.item.focal .body').first();
+  if (await focalItem.count()) {
+    await focalItem.click();
+    await panel.waitForTimeout(300);
+    const detailText = await panel.textContent('body');
+    check(detailText.includes('Request payload') && detailText.includes('Response body'), 'evidence tab shows request/response detail');
+    check((await panel.locator('mark').count()) > 0, 'correlation id highlighted in detail view');
+  }
+  await panel.screenshot({ path: path.join(outDir, 'sidepanel-evidence.png'), fullPage: true });
   const popupPage = await context.newPage();
   await popupPage.goto(`chrome-extension://${extId}/popup.html`);
   await popupPage.waitForTimeout(800);

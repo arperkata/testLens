@@ -33,6 +33,7 @@ h2{font-size:14px;margin:18px 0 8px;color:var(--muted);text-transform:uppercase;
 img.shot{max-width:100%;border:1px solid var(--line);border-radius:8px}
 .ai{border-left:3px solid var(--warn);padding-left:10px}.prov{font-size:11px;color:var(--muted)}
 #replay{background:#000;border-radius:8px;overflow:hidden}
+mark{background:rgba(255,176,32,.25);color:var(--warn);border-radius:3px;padding:0 2px;font-weight:600}.corr{color:var(--warn);font-weight:600}
 label.f{display:inline-flex;gap:6px;align-items:center;margin-right:14px;color:var(--muted)}
 </style></head><body>
 <header><h1>TestLens incident</h1><span class="meta" id="hmeta"></span></header>
@@ -81,9 +82,12 @@ function renderNet(){const rows=[...C.exchanges].sort((a,b)=>a.ts-b.ts).map((e,i
  return '<tr class="clickable'+(f?' focal':'')+'" data-i="'+i+'"><td>'+t(e.ts)+'</td><td class="'+(e.response?'s'+String(e.response.status)[0]:'s5')+'">'+st+'</td><td>'+esc(e.method)+'</td><td>'+esc(e.url)+'</td><td>'+(e.timing?Math.round(e.timing.totalMs)+'ms':'')+'</td><td>'+(e.initiator?esc(e.initiator.type):'')+'</td><td>'+(inc.has('exchange:'+e.id)?'✓':'')+'</td></tr>'}).join('');
  $('#network').innerHTML='<table><thead><tr><th>time</th><th>status</th><th>method</th><th>url</th><th>dur</th><th>init</th><th>sel</th></tr></thead><tbody>'+rows+'</tbody></table><div id="netdetail"></div>';
  const sorted=[...C.exchanges].sort((a,b)=>a.ts-b.ts);$('#network tbody').onclick=ev=>{const tr=ev.target.closest('tr');if(!tr)return;const e=sorted[+tr.dataset.i];
- const h=hs=>hs.map(x=>esc(x.name)+': '+esc(x.value)).join('\\n');$('#netdetail').innerHTML='<div class="detail"><b>'+esc(e.method)+' '+esc(e.url)+'</b> <span class="badge">'+(e.error?'ERR '+esc(e.error.kind):e.response?e.response.status:'')+'</span>'+(e.correlationIds.length?'<div>correlation: '+e.correlationIds.map(c=>esc(c.header)+'='+esc(c.value)).join(', ')+'</div>':'')+
- '<h2>Request headers</h2><pre>'+h(e.request.headers)+'</pre>'+(e.request.body?'<h2>Request body <span class="badge">'+e.bodyCapture.request+'</span></h2><pre>'+esc(pretty(e.request.body.data))+'</pre>':'')+
- (e.response?'<h2>Response headers</h2><pre>'+h(e.response.headers)+'</pre><h2>Response body <span class="badge">'+e.bodyCapture.response+'</span></h2><pre>'+(e.response.body?esc(pretty(e.response.body.data)):'&lt;'+e.bodyCapture.response+'&gt;')+'</pre>':'')+(e.initiator&&e.initiator.stack?'<h2>Initiator stack</h2><pre>'+esc(e.initiator.stack)+'</pre>':'')+'</div>';$('#netdetail').scrollIntoView({behavior:'smooth'})}}
+ const corrH=new Set(e.correlationIds.map(c=>c.header.toLowerCase()));const corrV=e.correlationIds.map(c=>c.value).filter(Boolean);
+ const hl=s=>{let out=esc(s);for(const v of corrV){out=out.split(esc(v)).join('<mark>'+esc(v)+'</mark>')}return out};
+ const h=hs=>hs.length?hs.map(x=>(corrH.has(x.name.toLowerCase())?'<span class="corr">>>> '+esc(x.name)+': '+hl(x.value)+'</span>':'    '+esc(x.name)+': '+hl(x.value))).join('\\n'):'    (none captured)';
+ $('#netdetail').innerHTML='<div class="detail"><b>'+esc(e.method)+' '+hl(e.url)+'</b> <span class="badge">'+(e.error?'ERR '+esc(e.error.kind):e.response?e.response.status:'')+'</span>'+(e.correlationIds.length?'<div>correlation: '+e.correlationIds.map(c=>'<mark>'+esc(c.header)+'='+esc(c.value)+'</mark>').join(', ')+'</div>':'')+
+ '<h2>Request headers</h2><pre>'+h(e.request.headers)+'</pre><h2>Request payload <span class="badge">'+e.bodyCapture.request+'</span></h2><pre>'+(e.request.body?hl(pretty(e.request.body.data)):'&lt;'+e.bodyCapture.request+'&gt;')+'</pre>'+
+ (e.response?'<h2>Response headers <span class="badge">'+e.response.status+'</span></h2><pre>'+h(e.response.headers)+'</pre><h2>Response body <span class="badge">'+e.bodyCapture.response+'</span></h2><pre>'+(e.response.body?hl(pretty(e.response.body.data)):'&lt;'+e.bodyCapture.response+'&gt;')+'</pre>':'')+(e.initiator&&e.initiator.stack?'<h2>Initiator stack</h2><pre>'+esc(e.initiator.stack)+'</pre>':'')+'</div>';$('#netdetail').scrollIntoView({behavior:'smooth'})}}
 function pretty(s){try{return JSON.stringify(JSON.parse(s),null,2)}catch(e){return s}}
 renderNet();
 // console
