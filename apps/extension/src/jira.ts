@@ -1,9 +1,9 @@
 /** Jira service used by the background script. */
 import { JiraCloudAdapter } from '@testlens/trackers-jira-cloud';
 import type { AuthSession, FieldSchema, TrackerMapping } from '@testlens/trackers-core';
-import { getIncident, putIncident, type StoredIncident } from './buffer/db';
+import { getIncident, putIncident, type JiraTarget, type StoredIncident } from './buffer/db';
 import { artifactBlobs } from './incident';
-import { loadSettings, type JiraSettings, type Settings } from './settings';
+import { loadSettings, saveSettings, type JiraSettings, type Settings } from './settings';
 
 export const jira = new JiraCloudAdapter();
 
@@ -63,22 +63,52 @@ export interface JiraPreview {
   attachments: { id: string; fileName: string; bytes: number; include: boolean; tooLarge: boolean }[];
   limits: { maxAttachmentBytes: number };
   projectKey: string;
+  issueTypeId: string;
   issueTypeName?: string;
+  /** Effective destination and whether it is the settings default or an incident-specific choice. */
+  target: JiraTarget;
+  isDefault: boolean;
+}
+
+/** Destination for an incident: its own target if the tester changed it, otherwise the settings default. */
+export function resolveTarget(inc: StoredIncident, settings: Settings): JiraTarget {
+  if (inc.jiraTarget?.projectKey && inc.jiraTarget.issueTypeId) return inc.jiraTarget;
+  const j = settings.jira;
+  if (!j?.projectKey || !j.issueTypeId) throw new Error('Select a Jira project and issue type (side panel → Jira tab, or TestLens settings).');
+  return { projectKey: j.projectKey, issueTypeId: j.issueTypeId, issueTypeName: j.issueTypeName, fields: j.mapping?.fields ?? defaultMapping(j.projectKey, j.issueTypeId).fields };
+}
+
+function mappingFor(t: JiraTarget): TrackerMapping {
+  return { ...defaultMapping(t.projectKey, t.issueTypeId), fields: t.fields };
+}
+
+export async function setTarget(incidentId: string, target: JiraTarget | undefined, saveAsDefault = false): Promise<StoredIncident> {
+  const inc = await getIncident(incidentId);
+  if (!inc) throw new Error('Incident not found');
+  const updated: StoredIncident = { ...inc, jiraTarget: target };
+  await putIncident(updated);
+  if (saveAsDefault && target) {
+    const s = await loadSettings();
+    if (s.jira) {
+      s.jira = { ...s.jira, projectKey: target.projectKey, issueTypeId: target.issueTypeId, issueTypeName: target.issueTypeName, mapping: mappingFor(target) };
+      await saveSettings(s);
+    }
+  }
+  return updated;
 }
 
 export async function preview(incidentId: string): Promise<JiraPreview> {
   const inc = await getIncident(incidentId);
   if (!inc?.draft || !inc.context) throw new Error('Incident is not ready');
   const settings = await loadSettings();
-  const j = settings.jira;
-  if (!j?.projectKey || !j.issueTypeId) throw new Error('Select a Jira project and issue type in TestLens settings.');
-  const fields = await createFields(j.projectKey, j.issueTypeId);
-  const mapping = j.mapping ?? defaultMapping(j.projectKey, j.issueTypeId);
+  const t = resolveTarget(inc, settings);
+  const fields = await createFields(t.projectKey, t.issueTypeId);
+  const mapping = mappingFor(t);
   const payload = jira.buildPayload(inc.draft, mapping, fields);
   const validation = jira.validate(inc.draft, mapping, fields);
   const limits = await jira.limits(await jiraSession(settings));
   const attachments = inc.context.artifacts.map((a) => ({ id: a.id, fileName: a.fileName, bytes: a.bytes, include: a.include, tooLarge: a.bytes > limits.maxAttachmentBytes }));
-  return { payload, validation, fields, attachments, limits: { maxAttachmentBytes: limits.maxAttachmentBytes }, projectKey: j.projectKey, issueTypeName: j.issueTypeName };
+  return { payload, validation, fields, attachments, limits: { maxAttachmentBytes: limits.maxAttachmentBytes }, projectKey: t.projectKey, issueTypeId: t.issueTypeId, issueTypeName: t.issueTypeName, target: t, isDefault: !inc.jiraTarget };
 }
 
 export async function create(incidentId: string): Promise<StoredIncident> {
@@ -86,10 +116,10 @@ export async function create(incidentId: string): Promise<StoredIncident> {
   if (!inc?.draft || !inc.context) throw new Error('Incident is not ready');
   if (inc.jira?.key) throw new Error(`Already created as ${inc.jira.key}`);
   const settings = await loadSettings();
-  const j = settings.jira!;
+  const t = resolveTarget(inc, settings);
   const session = await jiraSession(settings);
-  const fields = await createFields(j.projectKey, j.issueTypeId);
-  const mapping = j.mapping ?? defaultMapping(j.projectKey, j.issueTypeId);
+  const fields = await createFields(t.projectKey, t.issueTypeId);
+  const mapping = mappingFor(t);
   const validation = jira.validate(inc.draft, mapping, fields);
   if (!validation.ok) throw new Error(`Cannot create: ${validation.problems.map((p) => p.message).join('; ')}`);
   const payload = jira.buildPayload(inc.draft, mapping, fields);
@@ -110,9 +140,14 @@ export async function similar(incidentId: string) {
   const inc = await getIncident(incidentId);
   if (!inc?.draft?.focalSignature) return [];
   const settings = await loadSettings();
-  if (!settings.jira?.projectKey) return [];
+  let projectKey: string;
+  try {
+    projectKey = resolveTarget(inc, settings).projectKey;
+  } catch {
+    return [];
+  }
   const s = await jiraSession(settings);
-  const res = (await jira.findSimilar?.(s, settings.jira.projectKey, inc.draft.focalSignature)) ?? [];
+  const res = (await jira.findSimilar?.(s, projectKey, inc.draft.focalSignature)) ?? [];
   await putIncident({ ...inc, similar: res });
   return res;
 }

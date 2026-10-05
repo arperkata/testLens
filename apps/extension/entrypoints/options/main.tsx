@@ -5,6 +5,8 @@ import type { FieldSchema, IssueTypeRef, ProjectRef } from '@testlens/trackers-c
 import { sendRuntime } from '../../src/messages';
 import { DEFAULT_SETTINGS, describeEntry, exportSettings, importSettings, loadSettings, normalizeOriginInput, originsToMatchPatterns, saveSettings, type Settings } from '../../src/settings';
 import { defaultMapping } from '../../src/jira';
+import { buildMappingFields, defaultFor, optionalFieldsWithValues, requiredFields, stringValues } from '../../src/jira-mapping';
+import { FieldControl } from '../../src/ui/FieldControl';
 
 function Options() {
   const [s, setS] = useState<Settings>();
@@ -291,7 +293,7 @@ function JiraSection({ s, update, persist, setMsg }: SectionProps) {
   };
 
   const required = fields ? requiredFields(fields) : [];
-  const optionalWithValues = fields ? fields.filter((f) => !f.required && f.allowedValues?.length && !['issuetype', 'project', 'parent'].includes(f.key)) : [];
+  const optionalWithValues = fields ? optionalFieldsWithValues(fields) : [];
   const missing = required.filter((f) => !values[f.key]);
 
   return (
@@ -389,82 +391,6 @@ function JiraSection({ s, update, persist, setMsg }: SectionProps) {
       )}
     </div>
   );
-}
-
-function FieldControl({ field, value, onChange, allowEmpty }: { field: FieldSchema; value: string; onChange: (v: string) => void; allowEmpty?: boolean }) {
-  const multi = field.type === 'array';
-  if (field.allowedValues?.length) {
-    const selected = value ? value.split(',').map((x) => x.trim()).filter(Boolean) : [];
-    if (multi) {
-      return (
-        <div style={{ minWidth: 220 }}>
-          <label>{field.name}{field.required ? ' *' : ''} <span className="badge">multi</span></label>
-          <select
-            multiple
-            size={Math.min(5, field.allowedValues.length)}
-            value={selected}
-            onChange={(e) => onChange(Array.from(e.target.selectedOptions).map((o) => o.value).join(', '))}
-          >
-            {field.allowedValues.map((v) => <option key={v.id} value={v.name}>{v.name}</option>)}
-          </select>
-        </div>
-      );
-    }
-    return (
-      <div style={{ minWidth: 220 }}>
-        <label>{field.name}{field.required ? ' *' : ''}</label>
-        <select value={value} onChange={(e) => onChange(e.target.value)}>
-          {allowEmpty && <option value="">— none —</option>}
-          {field.allowedValues.map((v) => <option key={v.id} value={v.name}>{v.name}</option>)}
-        </select>
-      </div>
-    );
-  }
-  return (
-    <div style={{ minWidth: 220 }}>
-      <label>{field.name}{field.required ? ' *' : ''} <span className="badge">{field.type}</span></label>
-      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={field.type === 'date' ? 'YYYY-MM-DD' : ''} />
-    </div>
-  );
-}
-
-const STANDARD_FIELDS = ['project', 'issuetype', 'summary', 'description', 'reporter', 'labels'];
-
-function requiredFields(fields: FieldSchema[]) {
-  return fields.filter((f) => f.required && !f.hasDefault && !STANDARD_FIELDS.includes(f.key));
-}
-
-/** Pick a sensible default: newest version, otherwise the first allowed value; free-text fields stay empty. */
-function defaultFor(field: FieldSchema): string | undefined {
-  const vals = field.allowedValues;
-  if (!vals?.length) return undefined;
-  if (field.itemsType === 'version' || field.type === 'version') {
-    const sorted = [...vals].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-    return sorted[sorted.length - 1]!.name;
-  }
-  return vals[0]!.name;
-}
-
-function stringValues(fields: Record<string, unknown>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(fields)) {
-    if (k === 'labels') continue;
-    if (typeof v === 'string') out[k] = v;
-    else if (Array.isArray(v)) out[k] = v.filter((x) => typeof x === 'string').join(', ');
-    else if (v && typeof v === 'object' && 'name' in v) out[k] = String((v as { name: unknown }).name);
-  }
-  return out;
-}
-
-function buildMappingFields(values: Record<string, string>, fields: FieldSchema[]): Record<string, unknown> {
-  const out: Record<string, unknown> = { labels: ['$labels'] };
-  const known = new Set(fields.map((f) => f.key));
-  for (const [k, v] of Object.entries(values)) {
-    if (!v.trim()) continue;
-    if (fields.length && !known.has(k)) continue;
-    out[k] = v.trim();
-  }
-  return out;
 }
 
 function PrivacySection({ s, update, persist }: SectionProps) {

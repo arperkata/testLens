@@ -217,6 +217,50 @@ try {
     }
   }
 
+  // ---- side panel renders ----
+  const panel = await context.newPage();
+  await panel.goto(`chrome-extension://${extId}/sidepanel.html`);
+  await panel.waitForTimeout(1500);
+  const panelText = await panel.textContent('body');
+  check(panelText.includes('Focal event') || panelText.includes('Incidents'), 'side panel renders');
+  await panel.screenshot({ path: path.join(outDir, 'sidepanel.png'), fullPage: true });
+  // Evidence tab: expand the focal exchange to verify the request/response detail view
+  await panel.click('.tabs button:nth-child(2)');
+  await panel.waitForTimeout(500);
+  const focalItem = panel.locator('.item.focal .body').first();
+  if (await focalItem.count()) {
+    await focalItem.click();
+    await panel.waitForTimeout(300);
+    const detailText = await panel.textContent('body');
+    check(detailText.includes('Request payload') && detailText.includes('Response body'), 'evidence tab shows request/response detail');
+    check((await panel.locator('mark').count()) > 0, 'correlation id highlighted in detail view');
+  }
+  await panel.screenshot({ path: path.join(outDir, 'sidepanel-evidence.png'), fullPage: true });
+  // Jira tab: destination comes from settings and can be changed per incident
+  await panel.click('.tabs button:nth-child(3)');
+  await panel.waitForTimeout(1200);
+  const jiraText = await panel.textContent('body');
+  check(jiraText.includes('SHOP · Bug'), 'jira tab shows destination from settings');
+  const changeBtn = panel.getByRole('button', { name: 'Change' });
+  if (await changeBtn.count()) {
+    await changeBtn.click();
+    await panel.waitForTimeout(1200);
+    const projectSelect = panel.locator('select').first();
+    const options = await projectSelect.locator('option').allTextContents();
+    check(options.some((o) => o.includes('SHOP')), `project dropdown lists projects (${options.join(' | ')})`);
+    check((await panel.textContent('body')).includes('Required fields'), 'required fields shown while changing destination');
+  } else {
+    check(false, 'Change button present on Jira tab (issue already created hides it)');
+  }
+  await panel.screenshot({ path: path.join(outDir, 'sidepanel-jira.png'), fullPage: true });
+  const popupPage = await context.newPage();
+  await popupPage.goto(`chrome-extension://${extId}/popup.html`);
+  await popupPage.waitForTimeout(800);
+  await popupPage.screenshot({ path: path.join(outDir, 'popup.png') });
+  const optPage = await context.newPage();
+  await optPage.goto(`chrome-extension://${extId}/options.html`);
+  await optPage.waitForTimeout(800);
+  await optPage.screenshot({ path: path.join(outDir, 'options.png'), fullPage: true });
   // ---- Jira preview + create against the mock ----
   const prev = await cfgPage.evaluate((id) => chrome.runtime.sendMessage({ type: 'tl:jira-preview', incidentId: id }), incidentId);
   check(prev.ok, `jira preview ok (${prev.ok ? '' : prev.error})`);
@@ -241,33 +285,6 @@ try {
     check(!JSON.stringify(issue).includes('hunter2') && !JSON.stringify(issue).includes('secret-token-value'), 'no secrets reached Jira payload');
   }
 
-  // ---- side panel renders ----
-  const panel = await context.newPage();
-  await panel.goto(`chrome-extension://${extId}/sidepanel.html`);
-  await panel.waitForTimeout(1500);
-  const panelText = await panel.textContent('body');
-  check(panelText.includes('Focal event') || panelText.includes('Incidents'), 'side panel renders');
-  await panel.screenshot({ path: path.join(outDir, 'sidepanel.png'), fullPage: true });
-  // Evidence tab: expand the focal exchange to verify the request/response detail view
-  await panel.click('.tabs button:nth-child(2)');
-  await panel.waitForTimeout(500);
-  const focalItem = panel.locator('.item.focal .body').first();
-  if (await focalItem.count()) {
-    await focalItem.click();
-    await panel.waitForTimeout(300);
-    const detailText = await panel.textContent('body');
-    check(detailText.includes('Request payload') && detailText.includes('Response body'), 'evidence tab shows request/response detail');
-    check((await panel.locator('mark').count()) > 0, 'correlation id highlighted in detail view');
-  }
-  await panel.screenshot({ path: path.join(outDir, 'sidepanel-evidence.png'), fullPage: true });
-  const popupPage = await context.newPage();
-  await popupPage.goto(`chrome-extension://${extId}/popup.html`);
-  await popupPage.waitForTimeout(800);
-  await popupPage.screenshot({ path: path.join(outDir, 'popup.png') });
-  const optPage = await context.newPage();
-  await optPage.goto(`chrome-extension://${extId}/options.html`);
-  await optPage.waitForTimeout(800);
-  await optPage.screenshot({ path: path.join(outDir, 'options.png'), fullPage: true });
 } catch (e) {
   console.error('E2E crashed:', e);
   failures.push(`crash: ${e.message}`);

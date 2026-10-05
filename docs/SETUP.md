@@ -211,7 +211,7 @@ traceparent  = https://tempo.example.com/trace/{value}
 3. The side panel opens on that tab only. It shows "Evidence preserved" while the post-click window runs, then the composed bug.
 4. **Bug tab**: check the focal event (change it from the candidate list if TestLens picked the wrong one), edit summary, steps, expected and actual, labels. Click **Save edits**.
 5. **Evidence tab**: tick or untick attachments and individual evidence items. Click a request to see request headers, payload, response headers and body; correlation ids are highlighted. The capture quality score explains any gaps.
-6. **Jira tab**: review the exact description and fields that will be posted, any similar open issues found, and attachment sizes. Click **Create Jira issue**. Nothing reaches Jira before this click.
+6. **Jira tab**: the destination (project, issue type, required field values) is prefilled from Settings and marked "default from settings". Click **Change** to pick a different project or issue type for this bug only; the required fields for that choice appear with defaults filled, and **Save as default** makes the new choice the default for future bugs. Review the exact description and fields that will be posted, any similar open issues found, and attachment sizes. Click **Create in <project>**. Nothing reaches Jira before this click.
 7. The issue key appears with a link. The incident stays in the **Incidents** list for the retention period.
 
 **Pop out** in the panel header opens the same review in a separate window. **Incidents** in the popup lists past incidents for the current tab's window.

@@ -279,6 +279,8 @@ export default defineBackground(() => {
         return jira.create(req.incidentId);
       case 'tl:jira-similar':
         return jira.similar(req.incidentId);
+      case 'tl:set-jira-target':
+        return jira.setTarget(req.incidentId, req.target, req.saveAsDefault);
       case 'tl:start-tab-recording':
       case 'tl:stop-tab-recording':
         throw new Error('Tab video recording is not available in this build yet.');

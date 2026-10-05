@@ -24,6 +24,14 @@ export interface RrwebChunk {
 
 export type IncidentStatus = 'collecting' | 'ready' | 'created' | 'error';
 
+export interface JiraTarget {
+  projectKey: string;
+  issueTypeId: string;
+  issueTypeName?: string;
+  /** Mapping fields for this incident (same shape as settings.jira.mapping.fields). */
+  fields: Record<string, unknown>;
+}
+
 export interface StoredIncident {
   incidentId: string;
   tabId: number;
@@ -38,6 +46,8 @@ export interface StoredIncident {
   context?: BugContext;
   draft?: BugDraft;
   jira?: { key: string; url: string; attachments: { fileName: string; ok: boolean; error?: string }[] };
+  /** Per-incident Jira destination chosen in the side panel; falls back to settings when absent. */
+  jiraTarget?: JiraTarget;
   similar?: { key: string; summary: string; url: string; status: string }[];
 }
 

@@ -6,6 +6,9 @@ import type { StoredIncident } from '../../src/buffer/db';
 import type { JiraPreview } from '../../src/jira';
 import { sendRuntime } from '../../src/messages';
 import { loadSettings } from '../../src/settings';
+import type { FieldSchema, IssueTypeRef, ProjectRef } from '@testlens/trackers-core';
+import { buildMappingFields, optionalFieldsWithValues, requiredFields, stringValues, withDefaults } from '../../src/jira-mapping';
+import { FieldControl } from '../../src/ui/FieldControl';
 
 type Incident = StoredIncident;
 
@@ -491,24 +494,124 @@ function JiraTab({ incident, setIncident }: { incident: Incident; setIncident: (
   const [err, setErr] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [showPayload, setShowPayload] = useState(false);
+  // destination editing
+  const [projects, setProjects] = useState<ProjectRef[]>();
+  const [types, setTypes] = useState<IssueTypeRef[]>();
+  const [fields, setFields] = useState<FieldSchema[]>();
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [editing, setEditing] = useState(false);
+  const [loadingDest, setLoadingDest] = useState(false);
 
   const refresh = useCallback(async () => {
     setErr(undefined);
     const s = await loadSettings();
-    const ok = Boolean(s.jira?.baseUrl && s.jira.email && s.jira.token && s.jira.projectKey && s.jira.issueTypeId);
+    const ok = Boolean(s.jira?.baseUrl && s.jira.email && s.jira.token);
     setConfigured(ok);
     if (!ok) return;
     try {
-      setPreview(await sendRuntime<JiraPreview>({ type: 'tl:jira-preview', incidentId: incident.incidentId }));
+      const p = await sendRuntime<JiraPreview>({ type: 'tl:jira-preview', incidentId: incident.incidentId });
+      setPreview(p);
+      setFields(p.fields);
+      setValues(stringValues(p.target.fields));
       void sendRuntime<typeof similar>({ type: 'tl:jira-similar', incidentId: incident.incidentId }).then(setSimilar).catch(() => undefined);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+      // no project yet (settings incomplete): open the destination editor straight away
+      setEditing(true);
+      void loadProjects();
     }
   }, [incident.incidentId]);
 
   useEffect(() => {
     void refresh();
-  }, [refresh, incident.draft, incident.context?.artifacts]);
+  }, [refresh, incident.draft, incident.context?.artifacts, incident.jiraTarget]);
+
+  const loadProjects = async () => {
+    if (projects) return;
+    setLoadingDest(true);
+    try {
+      setProjects(await sendRuntime<ProjectRef[]>({ type: 'tl:jira-projects' }));
+      if (preview) setTypes(await sendRuntime<IssueTypeRef[]>({ type: 'tl:jira-issue-types', projectKey: preview.projectKey }));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingDest(false);
+    }
+  };
+
+  const startEditing = async () => {
+    setEditing(true);
+    await loadProjects();
+  };
+
+  /** Apply a new destination for this incident; defaults for its required fields are filled automatically. */
+  const applyTarget = async (projectKey: string, issueTypeId: string, issueTypeName: string | undefined, nextValues: Record<string, string>, f: FieldSchema[], saveAsDefault = false) => {
+    setBusy(true);
+    try {
+      const target = { projectKey, issueTypeId, issueTypeName, fields: buildMappingFields(nextValues, f) };
+      const inc = await sendRuntime<Incident>({ type: 'tl:set-jira-target', incidentId: incident.incidentId, target, saveAsDefault });
+      setIncident(inc);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeProject = async (projectKey: string) => {
+    if (!projectKey) return;
+    setLoadingDest(true);
+    try {
+      const t = await sendRuntime<IssueTypeRef[]>({ type: 'tl:jira-issue-types', projectKey });
+      setTypes(t);
+      const bug = t.find((x) => !x.subtask && /^bug$/i.test(x.name)) ?? t.find((x) => !x.subtask);
+      if (bug) await changeType(projectKey, bug.id, t);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingDest(false);
+    }
+  };
+
+  const changeType = async (projectKey: string, issueTypeId: string, typeList = types) => {
+    if (!issueTypeId) return;
+    setLoadingDest(true);
+    try {
+      const f = await sendRuntime<FieldSchema[]>({ type: 'tl:jira-fields', projectKey, issueTypeId });
+      setFields(f);
+      const s = await loadSettings();
+      // same destination as settings → reuse its values; otherwise start from defaults
+      const base = s.jira && s.jira.projectKey === projectKey && s.jira.issueTypeId === issueTypeId ? stringValues(s.jira.mapping.fields) : {};
+      const next = withDefaults(base, f);
+      setValues(next);
+      await applyTarget(projectKey, issueTypeId, typeList?.find((x) => x.id === issueTypeId)?.name, next, f);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingDest(false);
+    }
+  };
+
+  const changeValue = (key: string, v: string) => {
+    const next = { ...values, [key]: v };
+    setValues(next);
+    if (preview && fields) void applyTarget(preview.projectKey, preview.issueTypeId, preview.issueTypeName, next, fields);
+  };
+
+  const resetToDefault = async () => {
+    setBusy(true);
+    try {
+      setIncident(await sendRuntime<Incident>({ type: 'tl:set-jira-target', incidentId: incident.incidentId, target: undefined }));
+      setEditing(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveAsDefault = async () => {
+    if (!preview || !fields) return;
+    await applyTarget(preview.projectKey, preview.issueTypeId, preview.issueTypeName, values, fields, true);
+  };
 
   const create = async () => {
     if (!confirm('Create this issue in Jira now? Review the preview first; this cannot be undone from TestLens.')) return;
@@ -533,26 +636,96 @@ function JiraTab({ incident, setIncident }: { incident: Incident; setIncident: (
     );
   if (!preview && !err) return <p><span className="spinner" /> Preparing Jira preview…</p>;
 
-  const fields = preview ? (preview.payload as { fields: Record<string, unknown> }).fields : {};
-  const descText = preview ? adfToText(fields.description) : '';
+  const payloadFields = preview ? (preview.payload as { fields: Record<string, unknown> }).fields : {};
+  const descText = preview ? adfToText(payloadFields.description) : '';
+  const required = fields ? requiredFields(fields) : [];
+  const optional = fields ? optionalFieldsWithValues(fields) : [];
+  const created = Boolean(incident.jira?.key);
 
   return (
     <>
       {err && <div className="card err">{err}</div>}
+
+      {/* Destination */}
+      <div className="card">
+        <div className="row between">
+          <b>
+            {preview ? `${preview.projectKey} · ${preview.issueTypeName ?? 'issue'}` : 'Choose a Jira project'}
+            {preview && <span className="badge">{preview.isDefault ? 'default from settings' : 'changed for this bug'}</span>}
+          </b>
+          <span className="row" style={{ gap: 6 }}>
+            {preview && (preview.validation.ok ? <span className="badge ok">ready</span> : <span className="badge err">{preview.validation.problems.length} problem(s)</span>)}
+            {!created && !editing && <button className="small" onClick={startEditing}>Change</button>}
+          </span>
+        </div>
+
+        {editing && !created && (
+          <div style={{ marginTop: 8 }}>
+            {loadingDest && <p className="muted"><span className="spinner" /> Loading from Jira…</p>}
+            <div className="row" style={{ gap: 8 }}>
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <label>Project</label>
+                <select value={preview?.projectKey ?? ''} disabled={!projects || busy} onChange={(e) => void changeProject(e.target.value)}>
+                  {!projects && <option value={preview?.projectKey ?? ''}>{preview?.projectKey ?? '…'}</option>}
+                  {projects && <option value="">— select —</option>}
+                  {projects?.map((p) => (
+                    <option key={p.key} value={p.key}>
+                      {p.key} — {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ flex: 1, minWidth: 160 }}>
+                <label>Issue type</label>
+                <select value={preview?.issueTypeId ?? ''} disabled={!types || busy} onChange={(e) => preview && void changeType(preview.projectKey, e.target.value)}>
+                  {!types && <option value={preview?.issueTypeId ?? ''}>{preview?.issueTypeName ?? '…'}</option>}
+                  {types?.filter((t) => !t.subtask).map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {required.length > 0 && (
+              <>
+                <h3 style={{ marginBottom: 0 }}>Required fields</h3>
+                <div className="row" style={{ gap: 8, alignItems: 'flex-end' }}>
+                  {required.map((f) => (
+                    <FieldControl key={f.key} field={f} value={values[f.key] ?? ''} onChange={(v) => changeValue(f.key, v)} compact />
+                  ))}
+                </div>
+              </>
+            )}
+            {optional.length > 0 && (
+              <details style={{ marginTop: 6 }}>
+                <summary className="muted">Optional fields ({optional.map((f) => f.name).slice(0, 3).join(', ')}{optional.length > 3 ? '…' : ''})</summary>
+                <div className="row" style={{ gap: 8, alignItems: 'flex-end' }}>
+                  {optional.map((f) => (
+                    <FieldControl key={f.key} field={f} value={values[f.key] ?? ''} onChange={(v) => changeValue(f.key, v)} allowEmpty compact />
+                  ))}
+                </div>
+              </details>
+            )}
+            <div className="row" style={{ marginTop: 8 }}>
+              <button className="small" onClick={() => setEditing(false)}>Done</button>
+              <button className="small" onClick={saveAsDefault} disabled={busy || !preview} title="Use this project, issue type and field values for future bugs too">Save as default</button>
+              {preview && !preview.isDefault && <button className="small" onClick={resetToDefault} disabled={busy}>Back to default</button>}
+            </div>
+          </div>
+        )}
+
+        {preview && !preview.validation.ok && (
+          <ul className="err" style={{ margin: '6px 0 0 16px', padding: 0 }}>
+            {preview.validation.problems.map((p, i) => (
+              <li key={i}>{p.message}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       {preview && (
         <>
-          <div className="card">
-            <div className="row between">
-              <b>{preview.projectKey} · {preview.issueTypeName ?? 'issue'}</b>
-              {preview.validation.ok ? <span className="badge ok">ready</span> : <span className="badge err">{preview.validation.problems.length} problem(s)</span>}
-            </div>
-            {!preview.validation.ok && (
-              <ul className="err" style={{ margin: '6px 0 0 16px', padding: 0 }}>
-                {preview.validation.problems.map((p, i) => <li key={i}>{p.message}</li>)}
-              </ul>
-            )}
-          </div>
-
           {similar && similar.length > 0 && (
             <div className="card warn">
               <b>Possibly related open issues</b>
@@ -568,10 +741,10 @@ function JiraTab({ incident, setIncident }: { incident: Incident; setIncident: (
 
           <h2>Preview</h2>
           <div className="card">
-            <b>{String(fields.summary ?? '')}</b>
+            <b>{String(payloadFields.summary ?? '')}</b>
             <pre style={{ maxHeight: 400 }}>{descText}</pre>
             <div className="muted">
-              Fields: {Object.keys(fields).filter((k) => !['summary', 'description', 'project', 'issuetype'].includes(k)).map((k) => `${k}=${JSON.stringify(fields[k])}`).join(', ') || 'none beyond summary/description'}
+              Fields: {Object.keys(payloadFields).filter((k) => !['summary', 'description', 'project', 'issuetype'].includes(k)).map((k) => `${fields?.find((f) => f.key === k)?.name ?? k}=${JSON.stringify(payloadFields[k])}`).join(', ') || 'none beyond summary/description'}
             </div>
           </div>
 
@@ -595,8 +768,8 @@ function JiraTab({ incident, setIncident }: { incident: Incident; setIncident: (
           {showPayload && <pre>{JSON.stringify(preview.payload, null, 2)}</pre>}
 
           <div className="row" style={{ marginTop: 12 }}>
-            <button className="primary" disabled={busy || !preview.validation.ok || Boolean(incident.jira?.key)} onClick={create} style={{ flex: 1 }}>
-              {incident.jira?.key ? `Created ${incident.jira.key}` : busy ? 'Creating…' : 'Create Jira issue'}
+            <button className="primary" disabled={busy || !preview.validation.ok || created} onClick={create} style={{ flex: 1 }}>
+              {created ? `Created ${incident.jira!.key}` : busy ? 'Working…' : `Create in ${preview.projectKey}`}
             </button>
             <button onClick={refresh} disabled={busy}>Refresh</button>
           </div>
