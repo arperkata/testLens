@@ -193,15 +193,26 @@ function JiraSection({ s, update, persist, setMsg }: SectionProps) {
   const [advanced, setAdvanced] = useState(false);
   const [mappingText, setMappingText] = useState(JSON.stringify(j.mapping.fields, null, 2));
 
-  // When the saved project/type already exist, load their fields so the form can render.
+  // With saved credentials, load projects, issue types and fields on open so the
+  // project / issue type selects are always editable without re-connecting.
   useEffect(() => {
-    if (j.projectKey && j.issueTypeId && !fields && j.token) {
-      setLoadingFields(true);
-      sendRuntime<FieldSchema[]>({ type: 'tl:jira-fields', projectKey: j.projectKey, issueTypeId: j.issueTypeId })
-        .then(setFields)
-        .catch(() => undefined)
-        .finally(() => setLoadingFields(false));
-    }
+    if (!j.baseUrl || !j.email || !j.token) return;
+    setLoadingFields(true);
+    (async () => {
+      try {
+        const [p, t] = await Promise.all([
+          sendRuntime<ProjectRef[]>({ type: 'tl:jira-projects' }),
+          j.projectKey ? sendRuntime<IssueTypeRef[]>({ type: 'tl:jira-issue-types', projectKey: j.projectKey }) : Promise.resolve(undefined),
+        ]);
+        setProjects(p);
+        if (t) setTypes(t);
+        if (j.projectKey && j.issueTypeId) setFields(await sendRuntime<FieldSchema[]>({ type: 'tl:jira-fields', projectKey: j.projectKey, issueTypeId: j.issueTypeId }));
+      } catch (e) {
+        setMsg?.({ kind: 'err', text: `Jira: ${e instanceof Error ? e.message : String(e)}` });
+      } finally {
+        setLoadingFields(false);
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
