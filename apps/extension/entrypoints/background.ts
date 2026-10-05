@@ -65,6 +65,39 @@ export default defineBackground(() => {
     chrome.alarms.create('tl-expire', { periodInMinutes: 1 });
   });
 
+  // The popup that asked for a site permission is closed by Chrome when the prompt shows,
+  // so finish the job here: register the recorder and reload tabs that are now monitored.
+  chrome.permissions.onAdded.addListener(async (perm) => {
+    if (!perm.origins?.length) return;
+    await applySettings(await loadSettings());
+    await registerContentScripts();
+    const tabs = await chrome.tabs.query({});
+    for (const t of tabs) {
+      if (t.id === undefined || !isMonitoredUrl(t.url, settings!)) continue;
+      if (perm.origins.some((p) => matchesPattern(t.url!, p))) void chrome.tabs.reload(t.id);
+    }
+  });
+  chrome.permissions.onRemoved.addListener(() => void registerContentScripts());
+
+  function matchesPattern(url: string, pattern: string): boolean {
+    if (pattern === '<all_urls>') return true;
+    try {
+      const u = new URL(url);
+      const m = pattern.match(/^(\*|https?|file|ftp):\/\/(\*|\*\.[^/]+|[^/]+)\/(.*)$/);
+      if (!m) return false;
+      const [, scheme, host] = m;
+      if (scheme !== '*' && scheme !== u.protocol.replace(':', '')) return false;
+      if (host === '*') return true;
+      if (host!.startsWith('*.')) {
+        const d = host!.slice(2);
+        return u.hostname === d || u.hostname.endsWith(`.${d}`);
+      }
+      return u.hostname === host;
+    } catch {
+      return false;
+    }
+  }
+
   // ---------------- network ----------------
   installNetworkCapture({
     isMonitoredTab,

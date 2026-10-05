@@ -42,12 +42,20 @@ function Popup() {
     if (!origin) return;
     setBusy(true);
     try {
-      const granted = await chrome.permissions.request({ origins: originsToMatchPatterns([origin]) });
-      if (!granted) throw new Error('Permission was not granted');
+      // Save first: Chrome closes this popup as soon as the native permission prompt appears,
+      // so nothing after `permissions.request` is guaranteed to run. The background worker
+      // listens for permissions.onAdded, registers the recorder and reloads the tab.
       const s = await loadSettings();
       if (!s.monitoredOrigins.includes(origin)) s.monitoredOrigins.push(origin);
       s.onboarded = true;
       await saveSettings(s);
+      const granted = await chrome.permissions.request({ origins: originsToMatchPatterns([origin]) });
+      if (!granted) {
+        // user declined: roll the entry back
+        s.monitoredOrigins = s.monitoredOrigins.filter((o) => o !== origin);
+        await saveSettings(s);
+        throw new Error('Permission was not granted');
+      }
       await sendRuntime({ type: 'tl:apply-monitoring' });
       if (tab.id !== undefined) await chrome.tabs.reload(tab.id);
       window.close();
