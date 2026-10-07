@@ -10,7 +10,9 @@ import { finalizeIncident, patchIncident, redactionTotals, rememberPageInfo, rer
 import * as tracker from '../src/tracker';
 import * as ai from '../src/ai';
 import * as hub from '../src/hub';
-import { isRecording, markEnded, recordingSince, recordingSupported, startRecording, startSyntheticRecording, stopRecording } from '../src/recording';
+import { isRecording, markEnded, markWindowRecording, openRecorderWindow, recordingSince, recordingState, recordingSupported, startRecording, startSyntheticRecording, stopRecording } from '../src/recording';
+import type { HttpExchange } from '@testlens/schema';
+import type { AlertMessage } from '../src/messages';
 import { expireVideo } from '../src/buffer/db';
 import type { OffscreenEvent } from '../src/messages';
 import type { CaptureMessage, ContentConfig, RuntimeRequest, RuntimeResponse, TabStatus } from '../src/messages';
@@ -112,6 +114,10 @@ export default defineBackground(() => {
     onRedaction: (stats) => {
       for (const [k, v] of Object.entries(stats.counts)) redactionTotals[k] = (redactionTotals[k] ?? 0) + v;
     },
+    onExchange: (tabId, ex) => {
+      const f = failureOfExchange(ex);
+      if (f) noteFailure(tabId, 'request', f);
+    },
   });
 
   // ---------------- tabs ----------------
@@ -120,6 +126,7 @@ export default defineBackground(() => {
   });
   chrome.tabs.onRemoved.addListener((tabId) => {
     monitoredTabs.delete(tabId);
+    alerts.delete(tabId);
     void stopRecording(tabId).then(() => clearTab(tabId));
     void chrome.storage.session.remove(`tl.pageinfo.${tabId}`);
   });
@@ -155,6 +162,7 @@ export default defineBackground(() => {
       }
       case 'error':
         putEvent(tabId, 'error', { ...msg.entry, message: redactTextSafe(msg.entry.message), stack: msg.entry.stack ? redactTextSafe(msg.entry.stack) : undefined });
+        if (settings?.alerts.jsErrors && (msg.entry.kind === 'uncaught' || msg.entry.kind === 'unhandledrejection')) noteFailure(tabId, 'js-error', `${msg.entry.kind === 'uncaught' ? 'Uncaught error' : 'Unhandled rejection'}: ${msg.entry.message.slice(0, 120)}`);
         break;
       case 'navigation':
         putEvent(tabId, 'navigation', msg.entry);
@@ -170,6 +178,10 @@ export default defineBackground(() => {
           maxBodyBytes: () => settings?.maxBodyBytes ?? 262144,
           onRedaction: (stats) => {
             for (const [k, v] of Object.entries(stats.counts)) redactionTotals[k] = (redactionTotals[k] ?? 0) + v;
+          },
+          onExchange: (tid, ex) => {
+            const f = failureOfExchange(ex);
+            if (f) noteFailure(tid, 'request', f);
           },
         });
         break;
@@ -214,10 +226,102 @@ export default defineBackground(() => {
     await chrome.sidePanel.setOptions({ tabId, path: 'sidepanel.html', enabled: true });
   }
 
+  // ---------------- proactive failure alerts ----------------
+  // Per tab: how many failures since the last report, when the last toast was shown, whether muted.
+  const alerts = new Map<number, { count: number; lastToast: number; muted: boolean; last?: string }>();
+  const SHORTCUT = 'Alt+Shift+R';
+
+  function alertState(tabId: number) {
+    let a = alerts.get(tabId);
+    if (!a) {
+      a = { count: 0, lastToast: 0, muted: false };
+      alerts.set(tabId, a);
+    }
+    return a;
+  }
+
+  async function updateBadge(tabId: number) {
+    const a = alerts.get(tabId);
+    const n = a && !a.muted ? a.count : 0;
+    try {
+      await chrome.action.setBadgeText({ tabId, text: n ? (n > 99 ? '99+' : String(n)) : '' });
+      if (n) await chrome.action.setBadgeBackgroundColor({ tabId, color: '#ff5c5c' });
+    } catch {
+      /* tab may be gone */
+    }
+  }
+
+  function noteFailure(tabId: number, kind: AlertMessage['kind'], summary: string) {
+    const s = settings;
+    if (!s?.alerts.enabled || !isMonitoredTab(tabId)) return;
+    const a = alertState(tabId);
+    a.count++;
+    a.last = summary;
+    void updateBadge(tabId);
+    if (a.muted || !s.alerts.toast) return;
+    const now = Date.now();
+    if (now - a.lastToast < s.alerts.cooldownMs) return;
+    a.lastToast = now;
+    const msg: AlertMessage = { type: 'tl:alert', count: a.count, summary, kind, shortcut: SHORTCUT };
+    chrome.tabs.sendMessage(tabId, msg).catch(() => undefined);
+  }
+
+  function failureOfExchange(ex: HttpExchange): string | undefined {
+    const s = settings;
+    if (!s) return undefined;
+    if (ex.classification.isTelemetry) return undefined;
+    const path = (() => {
+      try {
+        return new URL(ex.url).pathname;
+      } catch {
+        return ex.url;
+      }
+    })();
+    if (ex.error && s.alerts.networkErrors && ex.error.kind !== 'aborted') return `${ex.method} ${path} → ${ex.error.kind}${ex.error.message ? ` (${ex.error.message})` : ''}`;
+    if (ex.response && ex.response.status >= s.alerts.minStatus) return `${ex.method} ${path} → ${ex.response.status}`;
+    return undefined;
+  }
+
+  function clearAlerts(tabId: number) {
+    const a = alerts.get(tabId);
+    if (a) {
+      a.count = 0;
+      a.last = undefined;
+    }
+    void updateBadge(tabId);
+  }
+
+  /** Report started without a toolbar click (toast button or shortcut without activeTab). */
+  async function reportFromTab(tabId: number, note?: string, openPanel = true) {
+    await enablePanel(tabId);
+    const inc = await startIncident(tabId, note);
+    await chrome.storage.session.set({ 'tl.activeIncident': inc.incidentId });
+    clearAlerts(tabId);
+    let panelOpened = false;
+    if (openPanel) {
+      try {
+        await chrome.sidePanel.open({ tabId });
+        panelOpened = true;
+      } catch {
+        /* needs a user gesture in some Chrome versions; the toast tells the tester what to do */
+      }
+    }
+    return { incidentId: inc.incidentId, panelOpened };
+  }
+
+  // Keyboard shortcut: counts as invoking the extension, so the screenshot works too.
+  chrome.commands.onCommand.addListener(async (command, tab) => {
+    if (command !== 'report-issue') return;
+    const t = tab ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+    if (t?.id === undefined || !isMonitoredTab(t.id)) return;
+    await reportFromTab(t.id);
+  });
+
   // ---------------- runtime API ----------------
   chrome.runtime.onMessage.addListener((req: RuntimeRequest | OffscreenEvent | { target?: string }, _sender, sendResponse: (r: RuntimeResponse) => void) => {
-    // messages addressed to the offscreen recorder are answered there, not here
-    if ((req as { target?: string }).target === 'offscreen') return false;
+    // messages addressed to the offscreen recorder or the recorder window are answered there, not here
+    const target = (req as { target?: string }).target;
+    if (target === 'offscreen' || target === 'recorder') return false;
     if ((req as OffscreenEvent).target === 'background') {
       const ev = req as OffscreenEvent;
       if (ev.type === 'recording-ended') void markEnded(ev.tabId);
@@ -225,7 +329,7 @@ export default defineBackground(() => {
     }
     void (async () => {
       try {
-        const data = await handle(req as RuntimeRequest);
+        const data = await handle(req as RuntimeRequest, _sender);
         sendResponse({ ok: true, data });
       } catch (e) {
         sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) });
@@ -234,7 +338,7 @@ export default defineBackground(() => {
     return true;
   });
 
-  async function handle(req: RuntimeRequest): Promise<unknown> {
+  async function handle(req: RuntimeRequest, _sender?: chrome.runtime.MessageSender): Promise<unknown> {
     await settingsReady;
     const s = settings!;
     switch (req.type) {
@@ -246,6 +350,7 @@ export default defineBackground(() => {
         await enablePanel(req.tabId);
         const inc = await startIncident(req.tabId, req.note);
         await chrome.storage.session.set({ 'tl.activeIncident': inc.incidentId });
+        clearAlerts(req.tabId);
         return inc;
       }
       case 'tl:enable-panel':
@@ -254,7 +359,21 @@ export default defineBackground(() => {
       case 'tl:get-tab-status': {
         const tab = await chrome.tabs.get(req.tabId).catch(() => undefined);
         const { counts, oldest } = await tabCounts(req.tabId);
-        const st: TabStatus = { tabId: req.tabId, monitored: isMonitoredUrl(tab?.url, s), url: tab?.url, counts, oldestTs: oldest, recording: await isRecording(req.tabId), recordingSince: await recordingSince(req.tabId), recordingSupported: recordingSupported() };
+        const rs = await recordingState(req.tabId);
+        const a = alerts.get(req.tabId);
+        const st: TabStatus = {
+          tabId: req.tabId,
+          monitored: isMonitoredUrl(tab?.url, s),
+          url: tab?.url,
+          counts,
+          oldestTs: oldest,
+          recording: await isRecording(req.tabId),
+          recordingSince: await recordingSince(req.tabId),
+          recordingMode: rs?.mode,
+          recordingMic: rs?.mic,
+          recordingSupported: recordingSupported(),
+          alerts: { count: a?.count ?? 0, muted: a?.muted ?? false, last: a?.last, shortcut: SHORTCUT },
+        };
         return st;
       }
       case 'tl:list-incidents':
@@ -313,6 +432,29 @@ export default defineBackground(() => {
         return ai.projection(req.incidentId);
       case 'tl:ai-store':
         return ai.store(req.incidentId, req.analysis);
+      case 'tl:open-recorder':
+        await openRecorderWindow(req.tabId);
+        return true;
+      case 'tl:recorder-started':
+        await markWindowRecording(req.tabId, req.mic);
+        return true;
+      case 'tl:report-from-page': {
+        const tabId = _sender?.tab?.id;
+        if (tabId === undefined) throw new Error('No tab for this report');
+        return reportFromTab(tabId, req.note);
+      }
+      case 'tl:alert-state': {
+        const a = alerts.get(req.tabId);
+        return { count: a?.count ?? 0, muted: a?.muted ?? false, last: a?.last, shortcut: SHORTCUT };
+      }
+      case 'tl:alert-mute': {
+        const tabId = req.tabId >= 0 ? req.tabId : _sender?.tab?.id;
+        if (tabId !== undefined) {
+          alertState(tabId).muted = true;
+          void updateBadge(tabId);
+        }
+        return true;
+      }
       case 'tl:hub-status':
         return hub.status();
       case 'tl:hub-sync':

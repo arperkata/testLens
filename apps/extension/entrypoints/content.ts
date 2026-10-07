@@ -107,6 +107,9 @@ export default defineContentScript({
     document.addEventListener('change', (e) => e.target instanceof Element && (e.target as HTMLElement).tagName === 'SELECT' && emit('change', e.target, true), true);
     document.addEventListener('keydown', (e) => (e.key === 'Enter' || e.key === 'Escape') && e.target instanceof Element && emit('keydown', e.target), true);
 
+    // ---- failure alert toast (top frame only; background decides when) ----
+    if (isTop) installAlertToast();
+
     // ---- page info (top frame only) ----
     if (isTop) {
       const sendInfo = () =>
@@ -174,6 +177,95 @@ export default defineContentScript({
     }
   },
 });
+
+/**
+ * In-page alert: a small shadow-DOM toast the background triggers when a failure is observed.
+ * Isolated from the page's CSS; one click starts the report, or the tester uses the shortcut
+ * (which also captures a screenshot because it counts as invoking the extension).
+ */
+function installAlertToast() {
+  let host: HTMLElement | undefined;
+  let hideTimer: ReturnType<typeof setTimeout> | undefined;
+  chrome.runtime.onMessage.addListener((msg: import('../src/messages').AlertMessage, _s, sendResponse) => {
+    if (!msg || msg.type !== 'tl:alert') return;
+    try {
+      show(msg);
+      sendResponse({ ok: true });
+    } catch {
+      sendResponse({ ok: false });
+    }
+  });
+
+  function show(a: import('../src/messages').AlertMessage) {
+    if (!host) {
+      host = document.createElement('div');
+      host.id = '__testlens_toast__';
+      host.setAttribute('data-testlens-block', ''); // excluded from DOM replay
+      host.style.cssText = 'all:initial;position:fixed;right:16px;bottom:16px;z-index:2147483647;';
+      const sh = host.attachShadow({ mode: 'open' });
+      sh.innerHTML = `
+        <style>
+          @keyframes tlin{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}
+          @keyframes tlpulse{0%,100%{box-shadow:0 0 0 0 rgba(255,92,92,.55)}50%{box-shadow:0 0 0 8px rgba(255,92,92,0)}}
+          .t{font:13px ui-sans-serif,system-ui,'Segoe UI',Roboto,sans-serif;background:#171a21;color:#e6e8ee;border:1px solid #2a2f3a;border-left:4px solid #ff5c5c;border-radius:10px;padding:10px 12px;width:320px;animation:tlin .18s ease-out;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+          .h{display:flex;align-items:center;gap:8px;font-weight:600}.dot{width:10px;height:10px;border-radius:50%;background:#ff5c5c;animation:tlpulse 1.4s infinite}
+          .s{color:#8b93a7;margin:4px 0 8px;font-family:ui-monospace,Consolas,monospace;font-size:12px;word-break:break-all}
+          .r{display:flex;gap:6px;align-items:center}
+          button{font:inherit;border:1px solid #2a2f3a;background:#1d212b;color:#e6e8ee;border-radius:6px;padding:5px 10px;cursor:pointer}
+          button.p{background:#4f8cff;border-color:#4f8cff;color:#fff;font-weight:600}
+          .k{margin-left:auto;color:#8b93a7;font-size:11px}
+          .x{position:absolute;right:8px;top:6px;background:none;border:0;color:#8b93a7;font-size:14px;padding:2px 6px}
+          .wrap{position:relative}
+        </style>
+        <div class="wrap"><div class="t">
+          <button class="x" id="x" title="Dismiss">✕</button>
+          <div class="h"><span class="dot"></span><span id="title">TestLens noticed a failure</span></div>
+          <div class="s" id="sum"></div>
+          <div class="r"><button class="p" id="report">Report issue</button><button id="mute">Mute this tab</button><span class="k" id="k"></span></div>
+          <div class="s" id="done" style="display:none"></div>
+        </div></div>`;
+      document.documentElement.appendChild(host);
+      const $ = (id: string) => sh.getElementById(id)!;
+      $('x').onclick = () => hide();
+      $('mute').onclick = () => {
+        void chrome.runtime.sendMessage({ type: 'tl:alert-mute', tabId: -1 });
+        hide();
+      };
+      $('report').onclick = async () => {
+        ($('report') as HTMLButtonElement).disabled = true;
+        $('report').textContent = 'Capturing…';
+        try {
+          const res = (await chrome.runtime.sendMessage({ type: 'tl:report-from-page' })) as { ok: boolean; data?: { incidentId: string; panelOpened: boolean }; error?: string };
+          if (!res?.ok) throw new Error(res?.error ?? 'failed');
+          $('title').textContent = 'Evidence preserved';
+          $('sum').textContent = res.data?.panelOpened ? 'Review it in the TestLens panel that just opened.' : 'Click the TestLens icon (or press the shortcut) to review and create the bug.';
+          $('report').style.display = 'none';
+          $('mute').style.display = 'none';
+          hideTimer = setTimeout(hide, 8000);
+        } catch (e) {
+          $('sum').textContent = `Could not start the report: ${e instanceof Error ? e.message : String(e)}`;
+          ($('report') as HTMLButtonElement).disabled = false;
+          $('report').textContent = 'Report issue';
+        }
+      };
+    }
+    const sh = host.shadowRoot!;
+    const $ = (id: string) => sh.getElementById(id)!;
+    $('title').textContent = a.count > 1 ? `TestLens noticed ${a.count} failures` : a.kind === 'js-error' ? 'TestLens noticed a JavaScript error' : 'TestLens noticed a failed request';
+    $('sum').textContent = a.summary;
+    $('k').textContent = `or press ${a.shortcut}`;
+    $('report').style.display = '';
+    $('mute').style.display = '';
+    ($('report') as HTMLButtonElement).disabled = false;
+    $('report').textContent = 'Report issue';
+    host.style.display = '';
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(hide, 25_000);
+  }
+  function hide() {
+    if (host) host.style.display = 'none';
+  }
+}
 
 function cssPath(el: Element): string {
   if (el.id) return `#${CSS.escape(el.id)}`;

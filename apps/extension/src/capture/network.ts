@@ -15,6 +15,8 @@ export interface NetworkCaptureDeps {
   captureBodies(): boolean;
   maxBodyBytes(): number;
   onRedaction(stats: RedactionStats): void;
+  /** Called once per finalized exchange (after redaction); used for proactive failure alerts. */
+  onExchange?(tabId: number, ex: HttpExchange): void;
 }
 
 interface Pending {
@@ -165,6 +167,7 @@ async function finalize(p: Pending, endTs: number, error: string | undefined, de
       const [page] = pp.splice(idx, 1);
       mergePage(ex, page!, rules, stats, deps.maxBodyBytes());
       putEvent(p.tabId, 'exchange', ex);
+      deps.onExchange?.(p.tabId, ex);
       return;
     }
   }
@@ -172,6 +175,7 @@ async function finalize(p: Pending, endTs: number, error: string | undefined, de
   arr.push({ id: ex.id, method: ex.method, url: p.url, ts: ex.ts, joined: false });
   recent.set(p.tabId, arr);
   putEvent(p.tabId, 'exchange', ex);
+  deps.onExchange?.(p.tabId, ex);
 }
 
 export async function ingestPageExchange(tabId: number, page: PageExchange, deps: NetworkCaptureDeps) {
@@ -219,6 +223,7 @@ async function writeStandalonePageExchange(tabId: number, page: PageExchange, de
   ex.url = redactUrl(ex.url, rules, stats);
   deps.onRedaction(stats);
   putEvent(tabId, 'exchange', ex);
+  deps.onExchange?.(tabId, ex);
 }
 
 function mergePage(ex: HttpExchange, page: PageExchange, rules: RedactionRules, stats: RedactionStats, maxBytes: number): HttpExchange {

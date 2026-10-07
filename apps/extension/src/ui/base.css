@@ -87,4 +87,24 @@ th { color: var(--muted); font-weight: 500; }
 mark { background: rgba(255, 176, 32, 0.25); color: var(--warn); border-radius: 3px; padding: 0 2px; font-weight: 600; }
 tr.corr td { background: rgba(255, 176, 32, 0.08); }
 tr.corr td:first-child { color: var(--warn) !important; font-weight: 600; }
+/* proactive alerts */
+.alert-card { border-left: 3px solid var(--err); }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--err); margin-right: 6px; animation: tlpulse 1.4s infinite; vertical-align: middle; }
+@keyframes tlpulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255, 92, 92, 0.55); } 50% { box-shadow: 0 0 0 7px rgba(255, 92, 92, 0); } }
+button.pulse { animation: tlbtn 1.6s infinite; }
+@keyframes tlbtn { 0%, 100% { box-shadow: 0 0 0 0 rgba(79, 140, 255, 0.6); } 50% { box-shadow: 0 0 0 8px rgba(79, 140, 255, 0); } }
+
+/* rewind-to-failure markers on the video player */
+.vwrap { position: relative; }
+.vbar { position: relative; height: 18px; margin-top: 4px; background: var(--panel2); border: 1px solid var(--line); border-radius: 9px; }
+.vbar .mk { position: absolute; top: -3px; width: 10px; height: 22px; margin-left: -5px; border-radius: 3px; cursor: pointer; border: 1px solid #000; }
+.vbar .mk.fail { background: var(--err); }
+.vbar .mk.error { background: var(--warn); }
+.vbar .mk.trigger { background: var(--acc); width: 4px; margin-left: -2px; }
+.vbar .mk:hover { transform: scaleX(1.4); }
+.vbar .pos { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; opacity: 0.8; pointer-events: none; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.chips button { padding: 2px 8px; font-size: 11px; }
+.chips button.fail { border-color: var(--err); color: var(--err); }
+.chips button.error { border-color: var(--warn); color: var(--warn); }
 .toast { position: fixed; bottom: 12px; left: 12px; right: 12px; background: var(--panel2); border: 1px solid var(--line); padding: 10px; border-radius: 8px; z-index: 10; }

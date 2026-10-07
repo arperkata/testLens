@@ -6,7 +6,7 @@
  * segment's wall-clock start, drop the *tail* of a segment where it overlaps the next one
  * (tails are safe to cut; heads are not, because the head holds the keyframe), and remux.
  */
-import { ALL_FORMATS, BlobSource, BufferTarget, EncodedPacketSink, EncodedVideoPacketSource, Input, Output, WebMOutputFormat } from 'mediabunny';
+import { ALL_FORMATS, BlobSource, BufferTarget, EncodedAudioPacketSource, EncodedPacketSink, EncodedVideoPacketSource, Input, Output, WebMOutputFormat } from 'mediabunny';
 
 export interface StitchSegment {
   blob: Blob;
@@ -30,15 +30,41 @@ export async function stitchWebm(segments: StitchSegment[]): Promise<StitchResul
   const target = new BufferTarget();
   const output = new Output({ format: new WebMOutputFormat(), target });
   let source: EncodedVideoPacketSource | undefined;
+  let audioSource: EncodedAudioPacketSource | undefined;
   let codec: string | undefined;
+  let audioCodec: string | undefined;
   let started = false;
   let packets = 0;
   let dropped = 0;
   const base = sorted[0]!.start;
-  /** timestamp (s) of the last packet written; the output must be strictly increasing */
+  /** timestamp (s) of the last packet written per track; the output must be strictly increasing */
   let lastTs = -1;
+  let lastAudioTs = -1;
   const FRAME = 0.1; // nominal frame spacing used for durations and the final end estimate
   const EPS = 0.001;
+
+  // Decide the track layout from the first segment (all segments come from the same recorder setup).
+  {
+    const probe = new Input({ source: new BlobSource(sorted[0]!.blob), formats: ALL_FORMATS });
+    try {
+      const v = await probe.getPrimaryVideoTrack();
+      const a = await probe.getPrimaryAudioTrack();
+      if (!v || !v.codec) throw new Error('no decodable video track in segments');
+      codec = v.codec;
+      source = new EncodedVideoPacketSource(v.codec);
+      // no frameRate hint: it makes the muxer quantise timestamps to the frame grid, which merges close frames
+      output.addVideoTrack(source);
+      if (a?.codec) {
+        audioCodec = a.codec;
+        audioSource = new EncodedAudioPacketSource(a.codec);
+        output.addAudioTrack(audioSource);
+      }
+      await output.start();
+      started = true;
+    } finally {
+      probe.dispose();
+    }
+  }
 
   for (let i = 0; i < sorted.length; i++) {
     const seg = sorted[i]!;
@@ -46,18 +72,7 @@ export async function stitchWebm(segments: StitchSegment[]): Promise<StitchResul
     const input = new Input({ source: new BlobSource(seg.blob), formats: ALL_FORMATS });
     try {
       const track = await input.getPrimaryVideoTrack();
-      if (!track || !track.codec) continue;
-      if (!source) {
-        codec = track.codec;
-        source = new EncodedVideoPacketSource(track.codec);
-        // no frameRate hint: it makes the muxer quantise timestamps to the frame grid, which merges close frames
-        output.addVideoTrack(source);
-        await output.start();
-        started = true;
-      } else if (track.codec !== codec) {
-        // codec changed between segments (should not happen); stop here rather than produce a broken file
-        break;
-      }
+      if (!track || !track.codec || track.codec !== codec) continue; // skip segments that do not match the layout
       const decoderConfig = (await track.getDecoderConfig()) ?? undefined;
       const meta = decoderConfig ? { decoderConfig } : undefined;
       const sink = new EncodedPacketSink(track);
@@ -79,12 +94,33 @@ export async function stitchWebm(segments: StitchSegment[]): Promise<StitchResul
           dropped++;
         } else {
           const outTs = ts <= lastTs ? lastTs + EPS : ts;
-          await source.add(packet.clone({ timestamp: outTs, duration: Math.min(packet.duration || FRAME, 0.5) }), isFirst ? meta : undefined);
+          await source!.add(packet.clone({ timestamp: outTs, duration: Math.min(packet.duration || FRAME, 0.5) }), isFirst ? meta : undefined);
           lastTs = outTs;
           packets++;
         }
         isFirst = false;
         packet = await sink.getNextPacket(packet);
+      }
+
+      // Audio (microphone narration from the window recorder): same offset and cut, Opus packets are independent.
+      if (audioSource && audioCodec) {
+        const atrack = await input.getPrimaryAudioTrack();
+        if (atrack?.codec === audioCodec) {
+          const aconf = (await atrack.getDecoderConfig()) ?? undefined;
+          const ameta = aconf ? { decoderConfig: aconf } : undefined;
+          const asink = new EncodedPacketSink(atrack);
+          let ap = await asink.getFirstPacket();
+          let aFirst = true;
+          while (ap) {
+            const ts = ap.timestamp + offsetSec;
+            if (ts < cutSec && ts > lastAudioTs) {
+              await audioSource.add(ap.clone({ timestamp: ts }), aFirst ? ameta : undefined);
+              lastAudioTs = ts;
+              aFirst = false;
+            }
+            ap = await asink.getNextPacket(ap);
+          }
+        }
       }
     } finally {
       input.dispose();
@@ -93,6 +129,7 @@ export async function stitchWebm(segments: StitchSegment[]): Promise<StitchResul
 
   if (!started || !source) throw new Error('no decodable video track in segments');
   source.close();
+  audioSource?.close();
   await output.finalize();
   if (!target.buffer) throw new Error('muxer produced no output');
   const blob = new Blob([target.buffer], { type: 'video/webm' });

@@ -83,6 +83,12 @@ export type RuntimeRequest =
   | { type: 'tl:ai-apply'; incidentId: string; fields: ('summary' | 'stepsToReproduce' | 'expectedResult' | 'actualResult')[] }
   | { type: 'tl:ai-projection'; incidentId: string }
   | { type: 'tl:ai-store'; incidentId: string; analysis: import('@testlens/schema').Analysis }
+  | { type: 'tl:open-recorder'; tabId: number }
+  | { type: 'tl:recorder-started'; tabId: number; mode: 'window'; mic: boolean }
+  /** Report started from the in-page alert toast (no activeTab grant → screenshot may be skipped). */
+  | { type: 'tl:report-from-page'; note?: string }
+  | { type: 'tl:alert-state'; tabId: number }
+  | { type: 'tl:alert-mute'; tabId: number }
   | { type: 'tl:hub-status' }
   | { type: 'tl:hub-sync' }
   | { type: 'tl:hub-test'; url: string }
@@ -117,8 +123,20 @@ export const DEFAULT_RECORDING_OPTIONS: RecordingOptions = {
   frameRate: 10,
 };
 
-/** Offscreen → background notifications. */
+/** Offscreen/recorder → background notifications. */
 export type OffscreenEvent = { target: 'background'; type: 'recording-ended'; tabId: number; reason: string };
+
+/** Background → recorder window control. */
+export type RecorderRequest = { target: 'recorder'; type: 'flush' | 'stop' | 'status'; tabId: number };
+
+/** Background → content script: a failure was observed in this tab. */
+export interface AlertMessage {
+  type: 'tl:alert';
+  count: number;
+  summary: string; // e.g. "POST /api/receipt → 500"
+  kind: 'request' | 'js-error';
+  shortcut: string; // e.g. "Alt+Shift+R"
+}
 
 export interface IncidentPatch {
   draft?: Partial<import('@testlens/schema').BugDraft>;
@@ -135,7 +153,10 @@ export interface TabStatus {
   oldestTs?: number;
   recording: boolean;
   recordingSince?: number;
+  recordingMode?: 'tab' | 'window';
+  recordingMic?: boolean;
   recordingSupported: boolean;
+  alerts: { count: number; muted: boolean; last?: string; shortcut: string };
 }
 
 export type RuntimeResponse<T = unknown> = { ok: true; data: T } | { ok: false; error: string };

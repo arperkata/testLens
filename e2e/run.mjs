@@ -182,8 +182,22 @@ try {
   await app.click('#submit'); // 500 + console.error + unhandled rejection
   await app.waitForTimeout(1200);
 
+  // ---- proactive failure alerts: the 500 and the thrown error should have raised the badge and the in-page toast ----
   const tabId = await cfgPage.evaluate(async ({ APP }) => (await chrome.tabs.query({ url: `${APP}/*` }))[0].id, { APP });
+  const alertState = await cfgPage.evaluate((tabId) => chrome.runtime.sendMessage({ type: 'tl:alert-state', tabId }), tabId);
+  check(alertState.ok && alertState.data.count >= 2, `alert counter counts the 500 and the JS error (${alertState.data?.count})`);
+  const badge = await cfgPage.evaluate((tabId) => chrome.action.getBadgeText({ tabId }), tabId);
+  check(/^\d+$/.test(badge) && Number(badge) >= 2, `toolbar badge shows the failure count (${badge})`);
+  const toastText = await app.evaluate(() => {
+    const host = document.getElementById('__testlens_toast__');
+    if (!host || host.style.display === 'none') return '';
+    return host.shadowRoot?.textContent ?? '';
+  });
+  check(toastText.includes('TestLens noticed') && toastText.includes('Report issue'), 'in-page toast shown with a Report button');
+  check(toastText.includes('Alt+Shift+R'), 'toast mentions the keyboard shortcut');
+
   const status = await cfgPage.evaluate((tabId) => chrome.runtime.sendMessage({ type: 'tl:get-tab-status', tabId }), tabId);
+  check(status.data.alerts?.count >= 2, 'tab status carries the alert count for the popup');
   console.log('tab status', JSON.stringify(status.data.counts));
   check(status.data.monitored, 'tab is monitored');
   check(status.data.counts.exchanges >= 4, 'network exchanges buffered');
@@ -347,6 +361,21 @@ try {
   await panel.waitForSelector('video', { timeout: 10000 }).catch(() => undefined);
   const videoCount = await panel.locator('video').count();
   check(videoCount === 1, `evidence tab shows a single video player (${videoCount})`);
+  // rewind-to-failure markers: the 500, the JS error and the Report Issue moment all fall inside the recording
+  const markerCount = await panel.locator('.vbar .mk').count();
+  const failMarkers = await panel.locator('.vbar .mk.fail').count();
+  check(markerCount >= 2 && failMarkers >= 1, `video has failure markers (${markerCount} markers, ${failMarkers} failed requests)`);
+  check((await panel.getByRole('button', { name: /Rewind to failure/ }).count()) === 1, 'Rewind to failure button present');
+  const chipCount = await panel.locator('.chips button').count();
+  if (chipCount) {
+    const before = await panel.locator('video').evaluate((v) => v.currentTime);
+    await panel.locator('.chips button').first().click();
+    await panel.waitForTimeout(800);
+    const after = await panel.locator('video').evaluate((v) => v.currentTime);
+    check(after !== before || after > 0, `clicking a marker seeks the video (${before.toFixed(1)}s → ${after.toFixed(1)}s)`);
+  }
+  const alertsAfter = await cfgPage.evaluate((tabId) => chrome.runtime.sendMessage({ type: 'tl:alert-state', tabId }), tabId);
+  check(alertsAfter.ok && alertsAfter.data.count === 0, 'alert counter cleared after the report');
   // Decode check on a dedicated page with the saved file, independent of the side panel's re-renders:
   // load metadata, then step through several positions including the very end so every join is decoded.
   const savedVideo = fs.readdirSync(outDir).filter((f) => /^recording_.*\.webm$/.test(f)).map((f) => path.join(outDir, f)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];

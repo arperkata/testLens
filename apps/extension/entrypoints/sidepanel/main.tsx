@@ -653,13 +653,7 @@ function EvidenceTab({ ctx, incident, onPatch }: { ctx: BugContext; incident: In
         <>
           <h2>Tab recording ({videos.length} segment{videos.length > 1 ? 's' : ''})</h2>
           {videos.map((v) => (
-            <div key={v.id} style={{ marginBottom: 8 }}>
-              <div className="muted mono" style={{ fontSize: 11 }}>
-                {v.name}
-                {v.range ? ` · ${rel(v.range.start, ctx.trigger.at)} → ${rel(v.range.end, ctx.trigger.at)}` : ''}
-              </div>
-              <video controls preload="metadata" src={v.url} style={{ width: '100%', borderRadius: 6, border: '1px solid var(--line)', background: '#000' }} />
-            </div>
+            <RewindPlayer key={v.id} video={v} ctx={ctx} />
           ))}
         </>
       )}
@@ -767,6 +761,101 @@ function pretty(s: string) {
   } catch {
     return s;
   }
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Video player with "rewind to failure" markers: every failed request, JavaScript error and the
+ * Report Issue moment that fall inside the recording are marked on a bar under the player and
+ * listed as chips. Clicking one seeks straight to that moment.
+ */
+function RewindPlayer({ video, ctx }: { video: { id: string; name: string; url: string; range?: { start: number; end: number } }; ctx: BugContext }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [pos, setPos] = useState(0);
+  const [dur, setDur] = useState<number>();
+  const range = video.range;
+  const spanMs = range ? range.end - range.start : 0;
+
+  type Marker = { ts: number; kind: 'fail' | 'error' | 'trigger'; label: string };
+  const markers: Marker[] = useMemo(() => {
+    if (!range) return [];
+    const inRange = (ts: number) => ts >= range.start && ts <= range.end;
+    const out: Marker[] = [];
+    for (const e of ctx.exchanges) {
+      if (e.classification.isTelemetry) continue;
+      const failed = e.error || (e.response && e.response.status >= 400);
+      if (failed && inRange(e.ts)) out.push({ ts: e.ts, kind: 'fail', label: `${e.error ? `ERR ${e.error.kind}` : e.response!.status} ${e.method} ${shortUrl(e.url)}` });
+    }
+    for (const er of ctx.errors) if ((er.kind === 'uncaught' || er.kind === 'unhandledrejection') && inRange(er.ts)) out.push({ ts: er.ts, kind: 'error', label: `${er.kind === 'uncaught' ? 'JS error' : 'Rejection'}: ${er.message.slice(0, 60)}` });
+    if (inRange(ctx.trigger.at)) out.push({ ts: ctx.trigger.at, kind: 'trigger', label: 'Report Issue clicked' });
+    return out.sort((a, b) => a.ts - b.ts);
+  }, [ctx, range]);
+
+  /** Map a wall-clock moment to a position in the file; the file may be shorter than the range, so scale. */
+  const toSec = (ts: number) => {
+    if (!range) return 0;
+    const fileDur = dur && Number.isFinite(dur) ? dur : spanMs / 1000;
+    return Math.max(0, Math.min(fileDur - 0.05, ((ts - range.start) / spanMs) * fileDur));
+  };
+  const seek = (ts: number) => {
+    const el = ref.current;
+    if (!el) return;
+    // land ~1.5 s before the failure so the viewer sees what led to it
+    el.currentTime = Math.max(0, toSec(ts) - 1.5);
+    void el.play().catch(() => undefined);
+  };
+  const focalTs = (() => {
+    const f = ctx.evidence?.focal;
+    if (!f) return undefined;
+    return ctx.timeline.find((t) => t.kind === f.kind && t.refId === f.refId)?.ts;
+  })();
+
+  return (
+    <div style={{ marginBottom: 10 }} className="vwrap">
+      <div className="row between">
+        <div className="muted mono" style={{ fontSize: 11 }}>
+          {video.name}
+          {range ? ` · ${rel(range.start, ctx.trigger.at)} → ${rel(range.end, ctx.trigger.at)}` : ''}
+        </div>
+        {focalTs !== undefined && range && focalTs >= range.start && focalTs <= range.end && (
+          <button className="small primary" onClick={() => seek(focalTs)} title="Jump to the moment of the focal failure">
+            ⏪ Rewind to failure
+          </button>
+        )}
+      </div>
+      <video
+        ref={ref}
+        controls
+        preload="metadata"
+        src={video.url}
+        style={{ width: '100%', borderRadius: 6, border: '1px solid var(--line)', background: '#000' }}
+        onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
+        onTimeUpdate={(e) => setPos(e.currentTarget.currentTime)}
+      />
+      {range && markers.length > 0 && (
+        <>
+          <div className="vbar" title="Failures in this recording — click to jump">
+            {markers.map((m, i) => (
+              <span key={i} className={`mk ${m.kind}`} style={{ left: `${((m.ts - range.start) / spanMs) * 100}%` }} title={`${rel(m.ts, ctx.trigger.at)} ${m.label}`} onClick={() => seek(m.ts)} />
+            ))}
+            {dur ? <span className="pos" style={{ left: `${Math.min(100, (pos / dur) * 100)}%` }} /> : null}
+          </div>
+          <div className="chips">
+            {markers
+              .filter((m) => m.kind !== 'trigger')
+              .slice(0, 12)
+              .map((m, i) => (
+                <button key={i} className={`small ${m.kind}`} onClick={() => seek(m.ts)} title={m.label}>
+                  {rel(m.ts, ctx.trigger.at)} {m.label.length > 38 ? `${m.label.slice(0, 37)}…` : m.label}
+                </button>
+              ))}
+          </div>
+        </>
+      )}
+      {range && markers.length === 0 && <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>No failed requests or errors fall inside this recording.</div>}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------

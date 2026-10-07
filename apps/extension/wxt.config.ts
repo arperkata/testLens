@@ -21,6 +21,10 @@ export default defineConfig({
     // so it only appears on the tab where the tester opened TestLens, never in other windows.
     options_ui: { page: 'options.html', open_in_tab: true },
     permissions: ['storage', 'unlimitedStorage', 'tabs', 'webRequest', 'scripting', 'alarms', 'sidePanel', 'activeTab', 'webNavigation', 'tabCapture', 'offscreen'],
+    // Report with one keystroke. A command invocation grants activeTab, so the screenshot works too.
+    commands: {
+      'report-issue': { suggested_key: { default: 'Alt+Shift+R' }, description: 'TestLens: report an issue on the current tab (preserves the last 5 minutes)' },
+    },
     // Host access is requested at runtime, per origin the tester chooses to monitor (plus the Jira site).
     optional_host_permissions: ['<all_urls>'],
   },

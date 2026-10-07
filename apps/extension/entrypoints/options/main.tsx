@@ -31,7 +31,7 @@ function Options() {
         <span className="muted">v{chrome.runtime.getManifest().version}</span>
       </div>
       <p className="muted">
-        TestLens is a flight recorder for testing. It keeps a rolling buffer of console, errors, network and interactions for the sites you choose, and turns the last 5 minutes into a reviewed Jira issue when you click â€œReport Issueâ€. Nothing leaves this machine until you click Create.
+        TestLens is a flight recorder for testing. It keeps a rolling buffer of console, errors, network and interactions for the sites you choose, and turns the last 5 minutes into a reviewed Jira issue when you click Ã¢â‚¬Å“Report IssueÃ¢â‚¬Â. Nothing leaves this machine until you click Create.
       </p>
 
       <MonitoringSection s={s} update={update} persist={persist} setMsg={setMsg} />
@@ -39,6 +39,7 @@ function Options() {
       <TrackerSection s={s} update={update} persist={persist} setMsg={setMsg} />
       <AiSection s={s} update={update} persist={persist} setMsg={setMsg} />
       <HubSection s={s} update={update} persist={persist} setMsg={setMsg} />
+      <AlertsSection s={s} update={update} persist={persist} />
       <PrivacySection s={s} update={update} persist={persist} />
       <TraceSection s={s} update={update} persist={persist} />
       <DataSection s={s} update={update} persist={persist} setMsg={setMsg} />
@@ -119,7 +120,7 @@ function MonitoringSection({ s, update, persist, setMsg }: SectionProps) {
     <div className="card">
       <h2 style={{ marginTop: 0 }}>1. Monitored sites</h2>
       <p className="muted">
-        Add the application under test. Monitoring is <b>domain-wide</b>: entering app.example.com covers example.com and every subdomain (api.example.com, auth.example.comâ€¦), http and https, any port. localhost and IP addresses are kept exact. Configure once; the same configuration applies to all normal windows and, once allowed, Incognito windows of this browser, and syncs with your signed-in Chrome profile.
+        Add the application under test. Monitoring is <b>domain-wide</b>: entering app.example.com covers example.com and every subdomain (api.example.com, auth.example.comÃ¢â‚¬Â¦), http and https, any port. localhost and IP addresses are kept exact. Configure once; the same configuration applies to all normal windows and, once allowed, Incognito windows of this browser, and syncs with your signed-in Chrome profile.
       </p>
       <div className="row">
         <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="app.example.com" style={{ flex: 1 }} />
@@ -149,7 +150,7 @@ function MonitoringSection({ s, update, persist, setMsg }: SectionProps) {
             <div key={o} className="item">
               <div className="body">
                 <div className="mono">
-                  {o.replace(/^\*\./, '')} {isGranted(o) ? <span className="badge ok">permission granted</span> : <span className="badge err">permission pending â€” click Apply</span>}
+                  {o.replace(/^\*\./, '')} {isGranted(o) ? <span className="badge ok">permission granted</span> : <span className="badge err">permission pending Ã¢â‚¬â€ click Apply</span>}
                 </div>
                 <div className="reasons">{describeEntry(o)}</div>
               </div>
@@ -174,7 +175,7 @@ function MonitoringSection({ s, update, persist, setMsg }: SectionProps) {
         <div className="row between">
           <span>
             <b>Incognito windows</b>{' '}
-            {incognitoAllowed === undefined ? null : incognitoAllowed ? <span className="badge ok">allowed â€” same configuration applies</span> : <span className="badge err">not allowed yet</span>}
+            {incognitoAllowed === undefined ? null : incognitoAllowed ? <span className="badge ok">allowed Ã¢â‚¬â€ same configuration applies</span> : <span className="badge err">not allowed yet</span>}
           </span>
           {incognitoAllowed === false && (
             <button className="small" onClick={() => chrome.tabs.create({ url: `chrome://extensions/?id=${chrome.runtime.id}` })}>
@@ -333,7 +334,7 @@ function TrackerSection({ s, update, persist, setMsg }: SectionProps) {
       setMappingText(JSON.stringify(mappingFields, null, 2));
       const nextTracker: TrackerSettings = { ...t, projectKey, projectName, issueTypeId, issueTypeName: ty?.name, mapping: { ...t.mapping, trackerId: t.trackerId, projectKey, issueTypeId, fields: mappingFields } };
       await persist({ ...s, tracker: nextTracker });
-      setMsg?.({ kind: 'ok', text: `Default destination set: ${projectKey} / ${ty?.name ?? issueTypeId}${requiredFields(f).length ? ' â€” review the required fields below' : ''}` });
+      setMsg?.({ kind: 'ok', text: `Default destination set: ${projectKey} / ${ty?.name ?? issueTypeId}${requiredFields(f).length ? ' Ã¢â‚¬â€ review the required fields below' : ''}` });
     } catch (e) {
       setMsg?.({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -379,13 +380,13 @@ function TrackerSection({ s, update, persist, setMsg }: SectionProps) {
       {d && (
         <div className="card" style={{ background: 'var(--panel2)', marginTop: 8 }}>
           <div className="row between">
-            <b>Step 1 â€” get your {d.authFields.find((f) => f.key === 'secret')?.label.replace(/\s*\(.*\)$/, '') ?? 'token'}</b>
+            <b>Step 1 Ã¢â‚¬â€ get your {d.authFields.find((f) => f.key === 'secret')?.label.replace(/\s*\(.*\)$/, '') ?? 'token'}</b>
             {(() => {
               const url = resolveTokenHelpUrl(d, t.baseUrl);
               const needsUrl = Boolean(d.tokenHelpUrl?.includes('{baseUrl}')) && !url;
               return (
                 <button className="primary small" disabled={!url} title={needsUrl ? `Enter the ${d.authFields.find((f) => f.key === 'baseUrl')?.label ?? 'URL'} first` : url} onClick={() => url && chrome.tabs.create({ url })}>
-                  {needsUrl ? 'Enter the URL first' : `Open ${d.displayName} token page â†—`}
+                  {needsUrl ? 'Enter the URL first' : `Open ${d.displayName} token page Ã¢â€ â€”`}
                 </button>
               );
             })()}
@@ -400,7 +401,7 @@ function TrackerSection({ s, update, persist, setMsg }: SectionProps) {
         </div>
       )}
 
-      <h3 style={{ marginBottom: 0 }}>Step 2 â€” enter the connection details</h3>
+      <h3 style={{ marginBottom: 0 }}>Step 2 Ã¢â‚¬â€ enter the connection details</h3>
       <div className="row" style={{ gap: 12 }}>
         {(d?.authFields ?? []).map((f) => (
           <div key={f.key} style={{ flex: f.key === 'secret' ? 3 : 2, minWidth: 220 }}>
@@ -416,9 +417,9 @@ function TrackerSection({ s, update, persist, setMsg }: SectionProps) {
           </div>
         ))}
       </div>
-      <h3 style={{ marginBottom: 0 }}>Step 3 â€” connect</h3>
+      <h3 style={{ marginBottom: 0 }}>Step 3 Ã¢â‚¬â€ connect</h3>
       <div className="row" style={{ marginTop: 6 }}>
-        <button className="primary" onClick={connect} disabled={testing || !authReady}>{testing ? 'Connectingâ€¦' : `Connect & load ${d?.containerLabel.toLowerCase() ?? 'project'}s`}</button>
+        <button className="primary" onClick={connect} disabled={testing || !authReady}>{testing ? 'ConnectingÃ¢â‚¬Â¦' : `Connect & load ${d?.containerLabel.toLowerCase() ?? 'project'}s`}</button>
         {who && <span className="ok">Connected as {who}</span>}
         {!authReady && !who && <span className="muted">Fill the fields above to enable</span>}
       </div>
@@ -429,10 +430,10 @@ function TrackerSection({ s, update, persist, setMsg }: SectionProps) {
             <label>{d?.containerLabel ?? 'Project'}</label>
             {projects ? (
               <select value={t.projectKey} onChange={(e) => void loadTypes(e.target.value)}>
-                <option value="">â€” select â€”</option>
+                <option value="">Ã¢â‚¬â€ select Ã¢â‚¬â€</option>
                 {projects.map((p) => (
                   <option key={p.key} value={p.key}>
-                    {p.key === p.name ? p.name : `${p.key} â€” ${p.name}`}
+                    {p.key === p.name ? p.name : `${p.key} Ã¢â‚¬â€ ${p.name}`}
                   </option>
                 ))}
               </select>
@@ -444,7 +445,7 @@ function TrackerSection({ s, update, persist, setMsg }: SectionProps) {
             <label>{d?.typeLabel ?? 'Issue type'}</label>
             {types ? (
               <select value={t.issueTypeId} onChange={(e) => void loadFields(e.target.value)}>
-                <option value="">â€” select â€”</option>
+                <option value="">Ã¢â‚¬â€ select Ã¢â‚¬â€</option>
                 {types.filter((x) => !x.subtask).map((x) => (
                   <option key={x.id} value={x.id}>
                     {x.name}
@@ -458,7 +459,7 @@ function TrackerSection({ s, update, persist, setMsg }: SectionProps) {
         </div>
       )}
 
-      {loadingFields && <p className="muted"><span className="spinner" /> Loading fieldsâ€¦</p>}
+      {loadingFields && <p className="muted"><span className="spinner" /> Loading fieldsÃ¢â‚¬Â¦</p>}
 
       {fields && (
         <div style={{ marginTop: 10 }}>
@@ -477,7 +478,7 @@ function TrackerSection({ s, update, persist, setMsg }: SectionProps) {
           )}
           {optional.length > 0 && (
             <details style={{ marginTop: 8 }}>
-              <summary className="muted">Optional defaults ({optional.slice(0, 3).map((f) => f.name).join(', ')}{optional.length > 3 ? 'â€¦' : ''})</summary>
+              <summary className="muted">Optional defaults ({optional.slice(0, 3).map((f) => f.name).join(', ')}{optional.length > 3 ? 'Ã¢â‚¬Â¦' : ''})</summary>
               <div className="row" style={{ gap: 12, alignItems: 'flex-end' }}>
                 {optional.map((f) => (
                   <FieldControl key={f.key} field={f} value={values[f.key] ?? ''} onChange={(v) => setValue(f.key, v)} allowEmpty />
@@ -581,10 +582,10 @@ function AiSection({ s, update, persist, setMsg }: SectionProps) {
 
       <div className="card" style={{ background: 'var(--panel2)' }}>
         <div className="row between">
-          <b>Step 1 â€” choose a provider and get a key</b>
+          <b>Step 1 Ã¢â‚¬â€ choose a provider and get a key</b>
           {preset.keyUrl && (
             <button className="primary small" onClick={() => chrome.tabs.create({ url: preset.keyUrl! })}>
-              {preset.needsKey ? `Open ${preset.displayName.replace(/\s*\(.*\)$/, '')} API keys page â†—` : `Install ${preset.displayName.replace(/\s*\(.*\)$/, '')} â†—`}
+              {preset.needsKey ? `Open ${preset.displayName.replace(/\s*\(.*\)$/, '')} API keys page Ã¢â€ â€”` : `Install ${preset.displayName.replace(/\s*\(.*\)$/, '')} Ã¢â€ â€”`}
             </button>
           )}
         </div>
@@ -593,7 +594,7 @@ function AiSection({ s, update, persist, setMsg }: SectionProps) {
           {PROVIDER_PRESETS.map((p) => (
             <option key={p.id} value={p.id}>
               {p.displayName}
-              {p.recommended ? ' â€” recommended' : ''}
+              {p.recommended ? ' Ã¢â‚¬â€ recommended' : ''}
             </option>
           ))}
         </select>
@@ -617,11 +618,11 @@ function AiSection({ s, update, persist, setMsg }: SectionProps) {
           <div className="row between">
             <b>
               Model status:{' '}
-              {builtin === undefined ? 'â€¦' : builtin === 'available' ? <span className="ok">ready on this machine</span> : builtin === 'downloadable' ? <span className="warn">not downloaded yet</span> : builtin === 'downloading' ? <span className="warn">downloading</span> : builtin === 'unsupported' ? <span className="err">not available in this browser (Chrome 138+ needed)</span> : <span className="err">unavailable on this device</span>}
+              {builtin === undefined ? 'Ã¢â‚¬Â¦' : builtin === 'available' ? <span className="ok">ready on this machine</span> : builtin === 'downloadable' ? <span className="warn">not downloaded yet</span> : builtin === 'downloading' ? <span className="warn">downloading</span> : builtin === 'unsupported' ? <span className="err">not available in this browser (Chrome 138+ needed)</span> : <span className="err">unavailable on this device</span>}
             </b>
             {(builtin === 'downloadable' || builtin === 'downloading') && (
               <button className="primary small" disabled={testing} onClick={downloadBuiltin}>
-                {testing ? `Downloadingâ€¦ ${progress !== undefined ? `${Math.round(progress * 100)}%` : ''}` : 'Download model (one time, â‰ˆ2 GB)'}
+                {testing ? `DownloadingÃ¢â‚¬Â¦ ${progress !== undefined ? `${Math.round(progress * 100)}%` : ''}` : 'Download model (one time, Ã¢â€°Ë†2 GB)'}
               </button>
             )}
           </div>
@@ -629,7 +630,7 @@ function AiSection({ s, update, persist, setMsg }: SectionProps) {
         </div>
       )}
 
-      <h3 style={{ marginBottom: 0 }}>Step 2 â€” connection</h3>
+      <h3 style={{ marginBottom: 0 }}>Step 2 Ã¢â‚¬â€ connection</h3>
       <div className="row" style={{ gap: 12 }}>
         <div style={{ flex: 1, minWidth: 180 }}>
           <label>Model</label>
@@ -655,9 +656,9 @@ function AiSection({ s, update, persist, setMsg }: SectionProps) {
         <label className="inline"><input type="checkbox" checked={ai.enabled} onChange={(e) => setAi({ enabled: e.target.checked })} /> AI analysis enabled</label>
       </div>
 
-      <h3 style={{ marginBottom: 0 }}>Step 3 â€” connect</h3>
+      <h3 style={{ marginBottom: 0 }}>Step 3 Ã¢â‚¬â€ connect</h3>
       <div className="row" style={{ marginTop: 6 }}>
-        <button className="primary" onClick={isBuiltin ? testBuiltin : connect} disabled={testing || !ready}>{testing ? 'Testingâ€¦' : isBuiltin ? 'Check & enable' : 'Connect & test'}</button>
+        <button className="primary" onClick={isBuiltin ? testBuiltin : connect} disabled={testing || !ready}>{testing ? 'TestingÃ¢â‚¬Â¦' : isBuiltin ? 'Check & enable' : 'Connect & test'}</button>
         <button onClick={() => persist()}>Save</button>
         {ok && <span className="ok">Model reachable: {ok}</span>}
         {!ready && <span className="muted">{preset.needsKey ? 'Enter the API key to enable' : 'Enter the base URL to enable'}</span>}
@@ -679,8 +680,8 @@ function HubSection({ s, update, persist, setMsg }: SectionProps) {
       if (!ok) throw new Error(`Permission to call ${new URL(hub.url).origin} was not granted`);
       await persist({ ...s, hub: { ...hub, enabled: true } });
       const h = await sendRuntime<{ version: string; dataDir: string }>({ type: 'tl:hub-test', url: hub.url });
-      setInfo(`Hub ${h.version} Â· data in ${h.dataDir}`);
-      setMsg?.({ kind: 'ok', text: 'Hub connected. Incidents from Postman/Newman now appear under Incidents â†’ Sync from Hub.' });
+      setInfo(`Hub ${h.version} Ã‚Â· data in ${h.dataDir}`);
+      setMsg?.({ kind: 'ok', text: 'Hub connected. Incidents from Postman/Newman now appear under Incidents Ã¢â€ â€™ Sync from Hub.' });
     } catch (e) {
       setMsg?.({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -694,7 +695,7 @@ function HubSection({ s, update, persist, setMsg }: SectionProps) {
         API-testing tools have no browser to record, so they push evidence to a small <b>local Hub</b> on your machine. The Hub normalises it; this extension pulls the incidents and handles review, AI and tracker creation exactly like browser bugs. No tracker credentials live in the Hub. HAR and Newman files can also be imported directly from the Incidents list without a Hub.
       </p>
       <div className="card" style={{ background: 'var(--panel2)' }}>
-        <b>Step 1 â€” start the Hub</b>
+        <b>Step 1 Ã¢â‚¬â€ start the Hub</b>
         <pre style={{ margin: '6px 0 0' }}>npx testlens-hub</pre>
         <p className="muted" style={{ margin: '4px 0 0' }}>From the TestLens repository: <code>npm run hub</code>. It listens on <code>http://localhost:7331</code> and shows the Postman snippet to paste into your collection.</p>
       </div>
@@ -709,10 +710,43 @@ function HubSection({ s, update, persist, setMsg }: SectionProps) {
         <label className="inline"><input type="checkbox" checked={hub.autoSync} onChange={(e) => setHub({ autoSync: e.target.checked })} /> Pull new incidents automatically (every minute)</label>
       </div>
       <div className="row" style={{ marginTop: 10 }}>
-        <button className="primary" onClick={connect} disabled={testing || !hub.url}>{testing ? 'Connectingâ€¦' : 'Step 2 â€” Connect & test'}</button>
+        <button className="primary" onClick={connect} disabled={testing || !hub.url}>{testing ? 'ConnectingÃ¢â‚¬Â¦' : 'Step 2 Ã¢â‚¬â€ Connect & test'}</button>
         <button onClick={() => persist()}>Save</button>
         {info && <span className="ok">{info}</span>}
       </div>
+    </div>
+  );
+}
+
+function AlertsSection({ s, update, persist }: SectionProps) {
+  const a = s.alerts;
+  const setA = (p: Partial<typeof a>) => update({ alerts: { ...a, ...p } });
+  return (
+    <div className="card">
+      <h2 style={{ marginTop: 0 }}>6. Failure alerts</h2>
+      <p className="muted">
+        When a monitored tab gets a server error, a network failure or an uncaught JavaScript error, TestLens turns the toolbar badge red with the count and shows a small in-page toast with a one-click <b>Report issue</b> button. The keyboard shortcut <b>Alt+Shift+R</b> reports with a full screenshot (change it at chrome://extensions/shortcuts). A report started from the toast captures everything except the screenshot, because Chrome ties screenshots to invoking the extension.
+      </p>
+      <div>
+        <label className="inline"><input type="checkbox" checked={a.enabled} onChange={(e) => setA({ enabled: e.target.checked })} /> Alerts enabled (badge count)</label>
+        <label className="inline"><input type="checkbox" checked={a.toast} onChange={(e) => setA({ toast: e.target.checked })} disabled={!a.enabled} /> Show the in-page toast</label>
+        <label className="inline"><input type="checkbox" checked={a.jsErrors} onChange={(e) => setA({ jsErrors: e.target.checked })} disabled={!a.enabled} /> Count JavaScript errors</label>
+        <label className="inline"><input type="checkbox" checked={a.networkErrors} onChange={(e) => setA({ networkErrors: e.target.checked })} disabled={!a.enabled} /> Count network failures</label>
+      </div>
+      <div className="row" style={{ gap: 24, marginTop: 6 }}>
+        <div>
+          <label>Lowest HTTP status that counts</label>
+          <select value={a.minStatus} onChange={(e) => setA({ minStatus: Number(e.target.value) })} disabled={!a.enabled} style={{ width: 220 }}>
+            <option value={500}>500 and above (server errors)</option>
+            <option value={400}>400 and above (client + server errors)</option>
+          </select>
+        </div>
+        <div>
+          <label>Minimum seconds between toasts (per tab)</label>
+          <input type="number" min={5} max={600} value={Math.round(a.cooldownMs / 1000)} onChange={(e) => setA({ cooldownMs: Number(e.target.value) * 1000 })} disabled={!a.enabled} style={{ width: 100 }} />
+        </div>
+      </div>
+      <button onClick={() => persist()} style={{ marginTop: 10 }}>Save</button>
     </div>
   );
 }
@@ -731,13 +765,13 @@ function PrivacySection({ s, update, persist }: SectionProps) {
   };
   return (
     <div className="card">
-      <h2 style={{ marginTop: 0 }}>6. Redaction</h2>
+      <h2 style={{ marginTop: 0 }}>7. Redaction</h2>
       <p className="muted">
         Built-in rules always mask: authorization, cookie, set-cookie, x-api-key, password, token, access_token, refresh_token, client_secret, api_key, secret, session ids, OTP/PIN/SSN/CVV/card fields, plus JWTs, bearer tokens, AWS/GitHub/OpenAI/Slack key formats and card-number-like digit runs. Masked values keep a short hash so equal values stay correlatable.
       </p>
       <label>Extra sensitive header / field names (comma separated)</label>
       <input value={keys} onChange={(e) => setKeys(e.target.value)} placeholder="x-tenant-secret, internalToken" />
-      <label>Extra regex patterns (one per line, â€œid = regexâ€)</label>
+      <label>Extra regex patterns (one per line, Ã¢â‚¬Å“id = regexÃ¢â‚¬Â)</label>
       <textarea className="mono" value={patterns} onChange={(e) => setPatterns(e.target.value)} placeholder={'employee-id = \\bEMP-\\d{6}\\b'} />
       <button onClick={save}>Save redaction rules</button>
     </div>
@@ -757,8 +791,8 @@ function TraceSection({ s, update, persist }: SectionProps) {
   };
   return (
     <div className="card">
-      <h2 style={{ marginTop: 0 }}>7. Backend trace links & noise</h2>
-      <p className="muted">When a failed response carries a correlation header, TestLens adds a deep link into your logging/tracing tool. One per line: â€œheader = URL template with {'{value}'}â€. Use â€œ*â€ as the header to apply to any correlation id.</p>
+      <h2 style={{ marginTop: 0 }}>8. Backend trace links & noise</h2>
+      <p className="muted">When a failed response carries a correlation header, TestLens adds a deep link into your logging/tracing tool. One per line: Ã¢â‚¬Å“header = URL template with {'{value}'}Ã¢â‚¬Â. Use Ã¢â‚¬Å“*Ã¢â‚¬Â as the header to apply to any correlation id.</p>
       <textarea className="mono" value={text} onChange={(e) => setText(e.target.value)} placeholder={'x-request-id = https://logs.example.com/app/discover#/?_a=(query:(query:\'{value}\'))\ntraceparent = https://tempo.example.com/trace/{value}'} />
       <label>Extra telemetry hosts to ignore (comma separated)</label>
       <input value={tele} onChange={(e) => setTele(e.target.value)} placeholder="metrics.internal.example.com" />
@@ -777,7 +811,7 @@ function DataSection({ s, update, persist, setMsg }: SectionProps) {
   };
   return (
     <div className="card">
-      <h2 style={{ marginTop: 0 }}>8. Data</h2>
+      <h2 style={{ marginTop: 0 }}>9. Data</h2>
       <p className="muted">Buffers expire continuously (older than the rolling window). Frozen incidents are kept locally and purged automatically.</p>
       <label>Keep incidents for (days)</label>
       <input type="number" min={1} max={90} value={s.retentionDays} onChange={(e) => update({ retentionDays: Number(e.target.value) })} style={{ width: 100 }} />

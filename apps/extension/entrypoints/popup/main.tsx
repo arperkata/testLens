@@ -105,6 +105,17 @@ function Popup() {
     }
   };
 
+  /** Entire window + microphone: Chrome only grants display capture to a visible extension page, so open the recorder window. */
+  const openRecorder = async () => {
+    if (!tab?.id) return;
+    try {
+      await sendRuntime({ type: 'tl:open-recorder', tabId: tab.id });
+      window.close();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const openPanel = async () => {
     if (tab?.id !== undefined) {
       await sendRuntime({ type: 'tl:enable-panel', tabId: tab.id });
@@ -158,23 +169,51 @@ function Popup() {
               <span>{status.counts.rrwebChunks ? 'replay ✓' : 'replay –'}</span>
             </div>
             {status.recordingSupported && (
-              <div className="row between" style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--line)' }}>
-                <span className={status.recording ? 'err' : 'muted'}>
-                  {status.recording
-                    ? `● Video recording this tab${autoStarted ? ' (started now)' : status.recordingSince ? ` since ${new Date(status.recordingSince).toLocaleTimeString()}` : ''}`
-                    : 'Video: off (DOM replay + screenshot still captured)'}
-                </span>
-                <button className="small" onClick={toggleRecording} disabled={busy} title="Chrome needs one click per tab to allow video capture. Recording stays on until the tab closes.">
-                  {status.recording ? 'Stop video' : 'Record this tab'}
-                </button>
+              <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--line)' }}>
+                <div className="row between">
+                  <span className={status.recording ? 'err' : 'muted'}>
+                    {status.recording
+                      ? `● Recording ${status.recordingMode === 'window' ? 'window' : 'this tab'}${status.recordingMic ? ' + mic' : ''}${autoStarted ? ' (started now)' : status.recordingSince ? ` since ${new Date(status.recordingSince).toLocaleTimeString()}` : ''}`
+                      : 'Video: off (DOM replay + screenshot still captured)'}
+                  </span>
+                  {status.recording && (
+                    <button className="small" onClick={toggleRecording} disabled={busy}>
+                      Stop video
+                    </button>
+                  )}
+                </div>
+                {!status.recording && (
+                  <div className="row" style={{ gap: 6, marginTop: 6 }}>
+                    <button className="small" onClick={toggleRecording} disabled={busy} title="Silent capture of this tab in the background. Stays on until the tab closes.">
+                      ▣ Current tab
+                    </button>
+                    <button className="small" onClick={openRecorder} disabled={busy} title="Opens a small recorder window: capture the entire window or screen and narrate with your microphone. Keep the window open while recording.">
+                      🖥 Entire window + mic
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
+          {status.alerts.count > 0 && !status.alerts.muted && (
+            <div className="card alert-card">
+              <div className="row between">
+                <b>
+                  <span className="dot" /> {status.alerts.count === 1 ? '1 failure' : `${status.alerts.count} failures`} noticed in this tab
+                </b>
+                <button className="small" onClick={() => void sendRuntime({ type: 'tl:alert-mute', tabId: tab!.id! }).then(() => setStatus({ ...status, alerts: { ...status.alerts, muted: true } }))}>
+                  mute
+                </button>
+              </div>
+              {status.alerts.last && <div className="muted mono" style={{ marginTop: 4, wordBreak: 'break-all' }}>{status.alerts.last}</div>}
+              <div className="muted" style={{ marginTop: 4 }}>Report Issue below preserves the last 5 minutes around {status.alerts.count === 1 ? 'it' : 'them'}. Shortcut: {status.alerts.shortcut}.</div>
+            </div>
+          )}
           <label>What went wrong? (optional)</label>
           <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Submitting the receipt form shows a spinner forever" />
           <div className="row" style={{ marginTop: 10 }}>
-            <button className="primary" onClick={report} disabled={busy} style={{ flex: 1 }}>
-              {busy ? 'Preserving evidence…' : 'Report Issue'}
+            <button className={`primary ${status.alerts.count > 0 && !status.alerts.muted ? 'pulse' : ''}`} onClick={report} disabled={busy} style={{ flex: 1 }}>
+              {busy ? 'Preserving evidence…' : status.alerts.count > 0 && !status.alerts.muted ? `Report Issue (${status.alerts.count} failure${status.alerts.count > 1 ? 's' : ''} noticed)` : 'Report Issue'}
             </button>
             <button onClick={openPanel}>Incidents</button>
           </div>

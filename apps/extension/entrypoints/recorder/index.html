@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TestLens recorder</title>
+    <style>
+      :root { --bg:#0f1115; --panel:#171a21; --line:#2a2f3a; --fg:#e6e8ee; --muted:#8b93a7; --acc:#4f8cff; --err:#ff5c5c; --ok:#3ecf8e; font-family: ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif; font-size: 13px; }
+      body { margin: 0; background: var(--bg); color: var(--fg); padding: 14px; }
+      h1 { font-size: 15px; margin: 0 0 8px; }
+      .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 8px 0; }
+      .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+      .seg button { flex: 1; background: var(--panel); color: var(--fg); border: 0; padding: 10px; cursor: pointer; }
+      .seg button.active { background: var(--acc); color: #fff; }
+      button.primary { background: var(--acc); color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; cursor: pointer; font-weight: 600; }
+      button.stop { background: var(--err); }
+      button:disabled { opacity: .5; cursor: not-allowed; }
+      label { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
+      .muted { color: var(--muted); } .ok { color: var(--ok); } .err { color: var(--err); }
+      video { width: 100%; background: #000; border-radius: 6px; border: 1px solid var(--line); margin-top: 8px; }
+      .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--err); animation: pulse 1.2s infinite; vertical-align: middle; margin-right: 6px; }
+      @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+    </style>
+  </head>
+  <body>
+    <h1>TestLens recorder</h1>
+    <div class="card">
+      <div class="muted" id="target">for tab …</div>
+      <div class="seg" style="margin-top:8px">
+        <button id="modeWindow" class="active">Entire window / screen</button>
+        <button id="modeTab">Current tab (silent, no window needed)</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label><input type="checkbox" id="mic" checked /> Microphone (narrate what you see)</label>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="start">Start rolling recording</button>
+        <button class="primary stop" id="stop" disabled>Stop</button>
+        <span id="status" class="muted">idle</span>
+      </div>
+      <p class="muted" style="margin:8px 0 0">Keep this small window open while recording. Only the last ~7 minutes are kept; when you click Report Issue, the footage in the incident window is attached as one file. Chrome's picker appears once per start.</p>
+    </div>
+    <video id="preview" muted autoplay playsinline></video>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

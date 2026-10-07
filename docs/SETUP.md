@@ -125,6 +125,27 @@ Monitoring status is shown in the popup: a green dot with live counts means the 
 
 Click **Save** after changes. Buffer settings take effect immediately; replay and body settings apply to tabs after reload.
 
+### 4.2a Video modes, rewind to failure, and failure alerts
+
+**Two video modes** (popup, on a monitored tab):
+
+| Mode | How | Audio | Notes |
+|---|---|---|---|
+| **Current tab** | silent background capture; starts automatically when you open the popup | none | invisible to the tester; stops when the tab closes |
+| **Entire window + mic** | opens a small TestLens recorder window; Chrome's picker lets you choose a window or screen | microphone narration, optional | the recorder window must stay open; its footage is attached to incidents of the tab you started it from, with your voice track included in the single stitched file |
+
+Camera overlay is deliberately not offered: it adds nothing a developer needs and raises privacy questions.
+
+**Rewind to failure.** On the Evidence tab the video player has a bar under it with a marker for every failed request (red), JavaScript error (amber) and the Report Issue moment (blue) that fall inside the recording, plus chips listing them. Clicking a marker or chip seeks to about 1.5 seconds before that moment and plays. The **Rewind to failure** button jumps to the focal event. Hover a marker for its details.
+
+**Failure alerts.** When a monitored tab receives a server error (default 500 and above, configurable to 400), a network-level failure, or an uncaught JavaScript error:
+
+- the toolbar badge turns red with the count,
+- an in-page toast appears ("TestLens noticed a failed request — POST /api/receipt → 500") with **Report issue** and **Mute this tab**,
+- the popup's Report Issue button pulses and shows the count.
+
+Clicking **Report issue** in the toast preserves the evidence immediately and opens the side panel. Because Chrome only allows screenshots after the extension itself is invoked, a toast-started report has no screenshot; use the keyboard shortcut **Alt+Shift+R** (change it at `chrome://extensions/shortcuts`) or the popup to report with a screenshot. Toasts are rate-limited per tab (default 20 s); settings → **6. Failure alerts** controls all of this.
+
 ### 4.3 Bug tracker connection
 
 TestLens files issues into one configured tracker. Pick it in settings → **Bug tracker** → **Tracker**, fill the connection fields that appear, click **Connect & load …**, accept the browser permission prompt for that host, then choose the container and type. The token is stored in `chrome.storage.local` for this browser profile only and never syncs or leaves the machine except to the tracker itself.
