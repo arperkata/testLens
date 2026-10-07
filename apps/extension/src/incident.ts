@@ -273,6 +273,31 @@ export async function createIncidentFromContext(
 }
 
 /**
+ * Replace the screenshot with an annotated version. The untouched original is kept as an
+ * unselected attachment so nothing is lost; the HTML viewer is regenerated with the markup.
+ */
+export async function replaceScreenshot(incidentId: string, dataUrl: string): Promise<StoredIncident> {
+  const inc = await getIncident(incidentId);
+  if (!inc?.context || !inc.draft) throw new Error('Incident is not ready');
+  if (!/^data:image\/png;base64,/.test(dataUrl)) throw new Error('Expected a PNG data URL');
+  const shotId = `${incidentId}:screenshot`;
+  const origId = `${incidentId}:screenshot-original`;
+  const existing = await getBlob(shotId);
+  const artifacts = [...inc.context.artifacts];
+  if (existing && !artifacts.some((a) => a.id === origId)) {
+    await putBlob(origId, incidentId, existing);
+    artifacts.push(artifact(origId, 'file', 'screenshot-original.png', 'image/png', existing.size, 'not-applicable', undefined, false));
+  }
+  const blob = await (await fetch(dataUrl)).blob();
+  await putBlob(shotId, incidentId, blob);
+  const idx = artifacts.findIndex((a) => a.id === shotId);
+  const annotated = { ...artifact(shotId, 'screenshot', 'screenshot.png', 'image/png', blob.size, 'not-applicable'), include: idx >= 0 ? artifacts[idx]!.include : true };
+  if (idx >= 0) artifacts[idx] = annotated;
+  else artifacts.unshift(annotated);
+  return recomposeIncident({ ...inc, context: { ...inc.context, artifacts } });
+}
+
+/**
  * Recompose derived sections (e.g. after an AI analysis arrives) while keeping the tester's
  * summary/steps/expected/actual/labels and the AI-applied markers, then refresh text artifacts.
  */
@@ -314,7 +339,9 @@ async function writeTextArtifacts(inc: StoredIncident & { context: BugContext; d
   const id = inc.incidentId;
   const includes = Object.fromEntries(ctx.artifacts.map((a) => [a.kind, a.include]));
   const defaults = (await loadSettings()).attachDefaults;
-  const keep = ctx.artifacts.filter((a) => a.kind === 'screenshot' || a.kind === 'rrweb' || a.kind === 'video');
+  // keep every artifact that is not regenerated here (screenshot, replay, video, originals, raw payloads…)
+  const REGENERATED = new Set(['console-log', 'network-log', 'har-focused', 'har', 'incident-viewer']);
+  const keep = ctx.artifacts.filter((a) => !REGENERATED.has(a.kind));
   const text: Artifact[] = [];
   const add = async (kind: Artifact['kind'], fileName: string, mime: string, content: string) => {
     const blob = new Blob([content], { type: mime });

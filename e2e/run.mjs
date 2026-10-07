@@ -315,6 +315,23 @@ try {
     check(imported.data.context.exchanges.some((e) => e.response?.status === 500), 'HAR incident keeps the 500 exchange');
   }
 
+  // ---- screenshot markup: replace with an annotated PNG, keep the original unselected ----
+  {
+    const before = inc.context.artifacts.find((a) => a.kind === 'screenshot');
+    // a 2x2 red PNG stands in for the annotated image
+    const tiny = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR4nGP4z8DwHwyBNAMADxcD/fz7y4YAAAAASUVORK5CYII=';
+    const marked = await cfgPage.evaluate(({ id, dataUrl }) => chrome.runtime.sendMessage({ type: 'tl:update-screenshot', incidentId: id, dataUrl }), { id: incidentId, dataUrl: tiny });
+    check(marked.ok, `annotated screenshot saved (${marked.ok ? '' : marked.error})`);
+    if (marked.ok) {
+      const arts = marked.data.context.artifacts;
+      const shot = arts.find((a) => a.kind === 'screenshot');
+      const orig = arts.find((a) => a.fileName === 'screenshot-original.png');
+      check(shot && before && shot.bytes !== before.bytes && shot.bytes < 200, 'screenshot artifact now holds the annotated image');
+      check(orig && orig.include === false && orig.bytes === before.bytes, 'original screenshot kept as an unselected attachment');
+      inc = marked.data; // later checks use the refreshed incident
+    }
+  }
+
   // ---- AI enhancement against the mock OpenAI ----
   const projection = await cfgPage.evaluate((id) => chrome.runtime.sendMessage({ type: 'tl:ai-projection', incidentId: id }), incidentId);
   check(projection.ok, `AI projection built (${projection.ok ? '' : projection.error})`);
@@ -361,6 +378,17 @@ try {
   await panel.waitForSelector('video', { timeout: 10000 }).catch(() => undefined);
   const videoCount = await panel.locator('video').count();
   check(videoCount === 1, `evidence tab shows a single video player (${videoCount})`);
+  // markup editor opens on the screenshot (canvas) and can be cancelled
+  const annotate = panel.getByRole('button', { name: /Annotate/ });
+  if (await annotate.count()) {
+    await annotate.click();
+    await panel.waitForSelector('canvas', { timeout: 5000 }).catch(() => undefined);
+    const canvasOk = (await panel.locator('canvas').count()) === 1 && (await panel.getByRole('button', { name: 'Save markup' }).count()) === 1;
+    check(canvasOk, 'markup editor renders a canvas with tools');
+    await panel.getByRole('button', { name: 'Cancel' }).click();
+  } else {
+    check(false, 'Annotate button present on the Evidence tab');
+  }
   // rewind-to-failure markers: the 500, the JS error and the Report Issue moment all fall inside the recording
   const markerCount = await panel.locator('.vbar .mk').count();
   const failMarkers = await panel.locator('.vbar .mk.fail').count();

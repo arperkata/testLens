@@ -136,6 +136,8 @@ Click **Save** after changes. Buffer settings take effect immediately; replay an
 
 Camera overlay is deliberately not offered: it adds nothing a developer needs and raises privacy questions.
 
+**Screenshot markup.** On the Evidence tab, **Annotate** opens an editor over the screenshot: rectangle, arrow, text, highlight, freehand pen and a pixelate tool for hiding sensitive data, with undo and colours. **Save markup** replaces the screenshot in the bug and regenerates the HTML viewer; the untouched original stays as an unselected attachment (`screenshot-original.png`). Annotation is disabled once the issue has been created.
+
 **Rewind to failure.** On the Evidence tab the video player has a bar under it with a marker for every failed request (red), JavaScript error (amber) and the Report Issue moment (blue) that fall inside the recording, plus chips listing them. Clicking a marker or chip seeks to about 1.5 seconds before that moment and plays. The **Rewind to failure** button jumps to the focal event. Hover a marker for its details.
 
 **Failure alerts.** When a monitored tab receives a server error (default 500 and above, configurable to 400), a network-level failure, or an uncaught JavaScript error:

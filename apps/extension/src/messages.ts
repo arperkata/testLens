@@ -83,6 +83,8 @@ export type RuntimeRequest =
   | { type: 'tl:ai-apply'; incidentId: string; fields: ('summary' | 'stepsToReproduce' | 'expectedResult' | 'actualResult')[] }
   | { type: 'tl:ai-projection'; incidentId: string }
   | { type: 'tl:ai-store'; incidentId: string; analysis: import('@testlens/schema').Analysis }
+  /** Replace the incident screenshot with an annotated PNG (data URL); the original is kept unselected. */
+  | { type: 'tl:update-screenshot'; incidentId: string; dataUrl: string }
   | { type: 'tl:open-recorder'; tabId: number }
   | { type: 'tl:recorder-started'; tabId: number; mode: 'window'; mic: boolean }
   /** Report started from the in-page alert toast (no activeTab grant → screenshot may be skipped). */

@@ -6,7 +6,7 @@ import { defineBackground } from 'wxt/sandbox';
 import { DEFAULT_RULES, mergeRules, type RedactionRules } from '@testlens/redaction';
 import { clearTab, expire, deleteIncident, getBlob, getIncident, listIncidents, putEvent, putRrweb, purgeIncidents, tabCounts } from '../src/buffer/db';
 import { ingestPageExchange, installNetworkCapture } from '../src/capture/network';
-import { finalizeIncident, patchIncident, redactionTotals, rememberPageInfo, rerunEngine, startIncident } from '../src/incident';
+import { finalizeIncident, patchIncident, redactionTotals, rememberPageInfo, replaceScreenshot, rerunEngine, startIncident } from '../src/incident';
 import * as tracker from '../src/tracker';
 import * as ai from '../src/ai';
 import * as hub from '../src/hub';
@@ -432,6 +432,8 @@ export default defineBackground(() => {
         return ai.projection(req.incidentId);
       case 'tl:ai-store':
         return ai.store(req.incidentId, req.analysis);
+      case 'tl:update-screenshot':
+        return replaceScreenshot(req.incidentId, req.dataUrl);
       case 'tl:open-recorder':
         await openRecorderWindow(req.tabId);
         return true;

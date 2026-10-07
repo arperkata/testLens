@@ -10,6 +10,7 @@ import { loadSettings } from '../../src/settings';
 import type { FieldSchema, IssueTypeRef, ProjectRef } from '@testlens/trackers-core';
 import { buildMappingFields, optionalFieldsWithValues, requiredFields, stringValues, withDefaults } from '../../src/jira-mapping';
 import { FieldControl } from '../../src/ui/FieldControl';
+import { MarkupEditor } from '../../src/ui/MarkupEditor';
 
 type Incident = StoredIncident;
 
@@ -266,7 +267,7 @@ function IncidentView({ incident, onBack, reload, setIncident }: { incident: Inc
       </div>
 
       {tab === 'bug' && <BugTab ctx={ctx} draft={draft} incident={incident} onPatch={patch} onAiApplied={setIncident} onRerun={(f) => run('rerun', async () => setIncident(await sendRuntime<Incident>({ type: 'tl:rerun-engine', incidentId: incident.incidentId, focal: f })))} />}
-      {tab === 'evidence' && <EvidenceTab ctx={ctx} incident={incident} onPatch={patch} />}
+      {tab === 'evidence' && <EvidenceTab ctx={ctx} incident={incident} onPatch={patch} onIncident={setIncident} />}
       {tab === 'jira' && <TrackerTab incident={incident} setIncident={setIncident} onPatch={patch} />}
 
       {(busy || msg) && (
@@ -562,8 +563,9 @@ function AiPanel({ ctx, draft, incident, onApplied }: { ctx: BugContext; draft: 
 
 // ---------------------------------------------------------------------------
 
-function EvidenceTab({ ctx, incident, onPatch }: { ctx: BugContext; incident: Incident; onPatch: (p: import('../../src/messages').IncidentPatch) => void }) {
+function EvidenceTab({ ctx, incident, onPatch, onIncident }: { ctx: BugContext; incident: Incident; onPatch: (p: import('../../src/messages').IncidentPatch) => void; onIncident: (i: Incident) => void }) {
   const [shot, setShot] = useState<string>();
+  const [editing, setEditing] = useState(false);
   const [videos, setVideos] = useState<{ id: string; name: string; url: string; range?: { start: number; end: number } }[]>([]);
   const [showAll, setShowAll] = useState(false);
   const [expanded, setExpanded] = useState<string>();
@@ -648,7 +650,33 @@ function EvidenceTab({ ctx, incident, onPatch }: { ctx: BugContext; incident: In
           </div>
         ))}
       </div>
-      {shot && <img className="shot" src={shot} alt="screenshot" style={{ marginTop: 8 }} />}
+      {shot && !editing && (
+        <div style={{ marginTop: 8 }}>
+          <div className="row between" style={{ marginBottom: 4 }}>
+            <span className="muted" style={{ fontSize: 11 }}>Screenshot at Report Issue</span>
+            <button className="small" onClick={() => setEditing(true)} disabled={Boolean(createdOf(incident))} title="Draw boxes, arrows and notes; pixelate sensitive data">
+              ✎ Annotate
+            </button>
+          </div>
+          <img className="shot" src={shot} alt="screenshot" />
+        </div>
+      )}
+      {shot && editing && (
+        <div style={{ marginTop: 8 }}>
+          <MarkupEditor
+            src={shot}
+            onCancel={() => setEditing(false)}
+            onSave={async (dataUrl) => {
+              try {
+                const inc = await sendRuntime<Incident>({ type: 'tl:update-screenshot', incidentId: incident.incidentId, dataUrl });
+                onIncident(inc);
+              } finally {
+                setEditing(false);
+              }
+            }}
+          />
+        </div>
+      )}
       {videos.length > 0 && (
         <>
           <h2>Tab recording ({videos.length} segment{videos.length > 1 ? 's' : ''})</h2>
