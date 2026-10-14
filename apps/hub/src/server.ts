@@ -175,7 +175,13 @@ export function createServer() {
       const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
       if (req.method === 'OPTIONS') return send(res, 204, '', 'text/plain');
       if (req.method === 'GET' && url.pathname === '/') return send(res, 200, await landing(), 'text/html; charset=utf-8');
-      if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, name: 'testlens-hub', version: '0.1.0', dataDir: DATA_DIR });
+      if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, name: 'testlens-hub', version: '0.1.0', dataDir: DATA_DIR, port: PORT });
+      if (req.method === 'GET' && url.pathname === '/snippet') {
+        // the Postman snippet, with this Hub's URL baked in, for the extension's API tab
+        const here = path.dirname(fileURLToPath(import.meta.url));
+        const raw = await fs.readFile(path.join(here, '..', '..', '..', 'integrations', 'postman', 'testlens-postman-snippet.js'), 'utf8').catch(() => '');
+        return send(res, 200, raw.replace("'http://localhost:7331'", `'http://localhost:${PORT}'`), 'text/javascript; charset=utf-8');
+      }
 
       if (req.method === 'POST' && (url.pathname === '/ingest/postman' || url.pathname === '/import')) {
         const buf = await readBody(req);

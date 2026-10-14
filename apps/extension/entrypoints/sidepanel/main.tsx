@@ -6,7 +6,7 @@ import type { BugContext, BugDraft, EvidenceItem, FocalEvent } from '@testlens/s
 import { getBlob, type StoredIncident } from '../../src/buffer/db';
 import type { TrackerPreview } from '../../src/tracker';
 import { sendRuntime } from '../../src/messages';
-import { loadSettings } from '../../src/settings';
+import { loadSettings, saveSettings } from '../../src/settings';
 import type { FieldSchema, IssueTypeRef, ProjectRef } from '@testlens/trackers-core';
 import { buildMappingFields, optionalFieldsWithValues, requiredFields, stringValues, withDefaults } from '../../src/jira-mapping';
 import { FieldControl } from '../../src/ui/FieldControl';
@@ -135,40 +135,221 @@ function IncidentList({ incidents, onOpen, onRefresh }: { incidents: IncidentRow
 
   const originBadge = (i: IncidentRow) => (i.origin === 'hub' ? <span className="badge">{i.toolName ?? 'Hub'}</span> : i.origin === 'import' ? <span className="badge">{i.toolName ?? 'import'}</span> : null);
 
+  // UI (browser) vs API (Hub, Postman, Newman, HAR) — remembered for the session; the popup can preselect API
+  const [mode, setMode] = useState<'ui' | 'api'>('ui');
+  useEffect(() => {
+    void chrome.storage.session.get('tl.panelMode').then((r) => {
+      if (r['tl.panelMode'] === 'api') setMode('api');
+    });
+  }, []);
+  const switchMode = (m: 'ui' | 'api') => {
+    setMode(m);
+    void chrome.storage.session.set({ 'tl.panelMode': m });
+  };
+  // while the API tab is open, watch for the Hub coming online every 3 s
+  useEffect(() => {
+    if (mode !== 'api') return;
+    const t = setInterval(() => void refreshHub(), 3000);
+    return () => clearInterval(t);
+  }, [mode, refreshHub]);
+
+  const uiIncidents = incidents.filter((i) => !i.origin || i.origin === 'browser');
+  const apiIncidents = incidents.filter((i) => i.origin === 'hub' || i.origin === 'import');
+
+  const rows = (list: IncidentRow[]) => (
+    <div className="list">
+      {list.map((i) => (
+        <div key={i.incidentId} className="item" style={{ cursor: 'pointer' }} onClick={() => onOpen(i.incidentId)}>
+          <div className="body">
+            <div className="title">
+              {i.summary ?? i.tab.title ?? i.tab.url} {originBadge(i)}
+            </div>
+            <div className="reasons">
+              {new Date(i.triggerAt).toLocaleString()} · {i.status}
+              {createdOf(i)?.key ? ` · ${createdOf(i)!.key}` : ''}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <div style={{ padding: 12 }}>
       <div className="row between">
         <h1>Incidents</h1>
         <button className="small" onClick={() => chrome.runtime.openOptionsPage()}>Settings</button>
       </div>
-      <div className="row" style={{ gap: 6, marginBottom: 8 }}>
-        <button className="small" onClick={syncHub} disabled={busy !== undefined || hub?.enabled === false} title={hub?.enabled === false ? 'Enable the Hub in Settings → API testing tools' : hub?.reachable ? `Hub at ${hub.url}` : hub?.error}>
-          {busy === 'sync' ? 'Syncing…' : `Sync from Hub${hub?.pending ? ` (${hub.pending} new)` : ''}`}
+      <div className="tabs" style={{ marginTop: 4 }}>
+        <button className={mode === 'ui' ? 'active' : ''} onClick={() => switchMode('ui')}>UI testing{uiIncidents.length ? ` (${uiIncidents.length})` : ''}</button>
+        <button className={mode === 'api' ? 'active' : ''} onClick={() => switchMode('api')}>
+          API testing{apiIncidents.length ? ` (${apiIncidents.length})` : ''} {hub?.enabled && <span className={hub.reachable ? 'ok' : 'err'}>●</span>}
         </button>
-        <button className="small" onClick={() => fileRef.current?.click()} disabled={busy !== undefined} title="HAR 1.2, Newman run JSON (-r json) or TestLens Postman payload">
-          {busy === 'import' ? 'Importing…' : 'Import HAR / Newman file'}
-        </button>
-        <input ref={fileRef} type="file" accept=".har,.json,application/json" style={{ display: 'none' }} onChange={(e) => void importFile(e.target.files?.[0])} />
-        {hub?.enabled && <span className={`muted`} style={{ fontSize: 11 }}>{hub.reachable ? <span className="ok">● Hub online</span> : <span className="err">● Hub offline — run: npx testlens-hub</span>}</span>}
       </div>
       {msg && <p className={msg.kind === 'err' ? 'err' : 'ok'}>{msg.text}</p>}
-      {!incidents.length && <p className="muted">No incidents yet. Click the TestLens icon on a monitored tab and choose “Report Issue”, pull one from the Hub, or import a HAR / Newman file.</p>}
-      <div className="list">
-        {incidents.map((i) => (
-          <div key={i.incidentId} className="item" style={{ cursor: 'pointer' }} onClick={() => onOpen(i.incidentId)}>
-            <div className="body">
-              <div className="title">
-                {i.summary ?? i.tab.title ?? i.tab.url} {originBadge(i)}
-              </div>
-              <div className="reasons">
-                {new Date(i.triggerAt).toLocaleString()} · {i.status}
-                {createdOf(i)?.key ? ` · ${createdOf(i)!.key}` : ''}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+
+      {mode === 'ui' && (
+        <>
+          {!uiIncidents.length && <p className="muted">No browser incidents yet. Open a monitored tab, click the TestLens icon and choose “Report Issue”, or press Alt+Shift+R when something breaks.</p>}
+          {rows(uiIncidents)}
+        </>
+      )}
+
+      {mode === 'api' && (
+        <ApiPanel
+          hub={hub}
+          busy={busy}
+          onConnect={async () => {
+            const s = await loadSettings();
+            try {
+              const origin = `${new URL(s.hub.url).origin}/*`;
+              const ok = await chrome.permissions.request({ origins: [origin] });
+              if (!ok) throw new Error('Permission to call the Hub was not granted');
+              await saveSettings({ ...s, hub: { ...s.hub, enabled: true } });
+              await refreshHub();
+            } catch (e) {
+              setMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+            }
+          }}
+          onSync={syncHub}
+          onImport={() => fileRef.current?.click()}
+          incidents={rows(apiIncidents)}
+          hasIncidents={apiIncidents.length > 0}
+        />
+      )}
+      <input ref={fileRef} type="file" accept=".har,.json,application/json" style={{ display: 'none' }} onChange={(e) => void importFile(e.target.files?.[0])} />
     </div>
+  );
+}
+
+/**
+ * API testing tab. The extension cannot start a process, so starting the Hub is a copy-paste
+ * (or a downloaded start script); the tab detects when it comes online and then provides the
+ * Postman snippet, the Newman command, file import and the API incidents.
+ */
+function ApiPanel({ hub, busy, onConnect, onSync, onImport, incidents, hasIncidents }: { hub?: import('../../src/hub').HubStatus; busy?: string; onConnect: () => Promise<void>; onSync: () => Promise<void>; onImport: () => void; incidents: React.ReactNode; hasIncidents: boolean }) {
+  const [copied, setCopied] = useState<string>();
+  const [snippet, setSnippet] = useState<string>();
+  const [showSnippet, setShowSnippet] = useState(false);
+  const url = hub?.url ?? 'http://localhost:7331';
+  const port = (() => {
+    try {
+      return new URL(url).port || '7331';
+    } catch {
+      return '7331';
+    }
+  })();
+  const copy = async (label: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(label);
+      setTimeout(() => setCopied(undefined), 1600);
+    } catch {
+      setCopied(`could not copy ${label}`);
+    }
+  };
+  const download = (name: string, text: string) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+  const loadSnippet = async () => {
+    if (!snippet) {
+      try {
+        setSnippet(await sendRuntime<string>({ type: 'tl:hub-snippet' }));
+      } catch (e) {
+        setSnippet(`// could not load from the Hub: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    setShowSnippet((v) => !v);
+  };
+  const online = Boolean(hub?.enabled && hub.reachable);
+  const startCmd = `npx testlens-hub`;
+  const startCmdPort = port === '7331' ? startCmd : `TL_HUB_PORT=${port} npx testlens-hub`;
+  const cmdFile = `@echo off\r\ntitle TestLens Hub\r\necho Starting TestLens Hub on ${url} ...\r\n${port === '7331' ? '' : `set TL_HUB_PORT=${port}\r\n`}npx testlens-hub\r\npause\r\n`;
+  const shFile = `#!/bin/sh\n# TestLens Hub — API-testing ingestion server\n${port === '7331' ? '' : `export TL_HUB_PORT=${port}\n`}exec npx testlens-hub\n`;
+  const newmanCmd = `newman run collection.json -e env.json -r cli,testlens --reporter-testlens-hub ${url}`;
+
+  return (
+    <>
+      {/* 1. Hub status + start */}
+      <div className="card">
+        <div className="row between">
+          <b>
+            <span className="badge" style={{ marginLeft: 0 }}>1</span> Local Hub{' '}
+            {hub?.enabled === false ? <span className="badge">not connected</span> : online ? <span className="badge ok">● online at {url}</span> : <span className="badge err">● offline</span>}
+          </b>
+          {hub?.enabled === false ? (
+            <button className="small primary" onClick={onConnect}>Connect</button>
+          ) : (
+            <button className="small" onClick={() => void onSync()} disabled={busy !== undefined || !online}>
+              {busy === 'sync' ? 'Syncing…' : `Sync from Hub${hub?.pending ? ` (${hub.pending} new)` : ''}`}
+            </button>
+          )}
+        </div>
+        {!online && (
+          <div style={{ marginTop: 8 }}>
+            <p className="muted" style={{ margin: '0 0 6px' }}>
+              The Hub is a small server on this machine that receives evidence from API tools. A browser extension cannot start it, so run this once in a terminal (needs Node.js). This tab detects it as soon as it is up.
+            </p>
+            <div className="row" style={{ gap: 6 }}>
+              <code className="mono" style={{ padding: '6px 10px', background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 6 }}>{startCmdPort}</code>
+              <button className="small primary" onClick={() => copy('command', startCmdPort)}>{copied === 'command' ? 'Copied' : 'Copy'}</button>
+            </div>
+            <div className="row" style={{ gap: 6, marginTop: 6 }}>
+              <span className="muted" style={{ fontSize: 11 }}>Or save a double-click starter:</span>
+              <button className="small" onClick={() => download('start-testlens-hub.cmd', cmdFile)}>Windows .cmd</button>
+              <button className="small" onClick={() => download('start-testlens-hub.sh', shFile)}>macOS / Linux .sh</button>
+              <span className="muted" style={{ fontSize: 11 }}>From the repo: <code>npm run hub</code></span>
+            </div>
+            {hub?.enabled && hub.error && <p className="muted" style={{ fontSize: 11, margin: '6px 0 0' }}>{hub.error}</p>}
+          </div>
+        )}
+        {online && (
+          <p className="muted" style={{ margin: '6px 0 0', fontSize: 12 }}>
+            Hub data stays on this machine. Incidents are pulled here automatically every minute, or now with Sync. Open <a href={url} target="_blank" rel="noreferrer">{url}</a> for the Hub page.
+          </p>
+        )}
+      </div>
+
+      {/* 2. Use it from API tools */}
+      <div className="card">
+        <b><span className="badge" style={{ marginLeft: 0 }}>2</span> Use it in your API tool</b>
+        <div style={{ marginTop: 8 }}>
+          <div className="row between">
+            <span><b>Postman</b> <span className="muted">collection → Scripts → Post-response</span></span>
+            <span className="row" style={{ gap: 6 }}>
+              <button className="small" onClick={loadSnippet} disabled={!online}>{showSnippet ? 'Hide snippet' : 'Show snippet'}</button>
+              <button className="small primary" disabled={!online} onClick={async () => { if (!snippet) { try { setSnippet(await sendRuntime<string>({ type: 'tl:hub-snippet' })); } catch { /* shown below */ } } const s = snippet ?? (await sendRuntime<string>({ type: 'tl:hub-snippet' }).catch(() => '')); if (s) void copy('snippet', s); }}>
+                {copied === 'snippet' ? 'Copied' : 'Copy snippet'}
+              </button>
+            </span>
+          </div>
+          <p className="muted" style={{ fontSize: 12, margin: '4px 0 0' }}>Reports only on 4xx/5xx, request errors or failed <code>pm.test</code>s. Force one with <code>pm.variables.set("TL_REPORT","why")</code>.</p>
+          {showSnippet && snippet && <pre style={{ maxHeight: 220, marginTop: 6 }}>{snippet}</pre>}
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <div className="row between">
+            <span><b>Newman / CI</b> <span className="muted">reporter in integrations/postman</span></span>
+            <button className="small" onClick={() => copy('newman', newmanCmd)}>{copied === 'newman' ? 'Copied' : 'Copy command'}</button>
+          </div>
+          <pre style={{ marginTop: 6, maxHeight: 80 }}>{newmanCmd}</pre>
+        </div>
+        <div style={{ marginTop: 10 }} className="row between">
+          <span><b>HAR / Newman JSON file</b> <span className="muted">DevTools, Charles, Fiddler, Proxyman, Insomnia</span></span>
+          <button className="small" onClick={onImport} disabled={busy !== undefined}>{busy === 'import' ? 'Importing…' : 'Import file'}</button>
+        </div>
+        <p className="muted" style={{ fontSize: 12, margin: '4px 0 0' }}>File import needs no Hub.</p>
+        {copied && copied.startsWith('could not') && <p className="err">{copied}</p>}
+      </div>
+
+      {/* 3. Incidents from API tools */}
+      <h2>API incidents</h2>
+      {!hasIncidents && <p className="muted">None yet. Run a failing request in Postman or Newman with the Hub online, or import a file.</p>}
+      {incidents}
+    </>
   );
 }
 

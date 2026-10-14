@@ -216,6 +216,15 @@ function Popup() {
               {busy ? 'Preserving evidence…' : status.alerts.count > 0 && !status.alerts.muted ? `Report Issue (${status.alerts.count} failure${status.alerts.count > 1 ? 's' : ''} noticed)` : 'Report Issue'}
             </button>
             <button onClick={openPanel}>Incidents</button>
+            <button
+              onClick={async () => {
+                await chrome.storage.session.set({ 'tl.panelMode': 'api' });
+                await openPanel();
+              }}
+              title="API testing: start the local Hub, get the Postman snippet, import HAR/Newman files"
+            >
+              API
+            </button>
           </div>
           {!jiraReady && (
             <p className="muted" style={{ marginTop: 8 }}>

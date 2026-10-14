@@ -87,6 +87,15 @@ export async function sync(): Promise<StoredIncident[]> {
   return created;
 }
 
+/** The Postman snippet with the Hub's URL baked in (served by the Hub so it always matches its port). */
+export async function snippet(): Promise<string> {
+  const { hub } = await loadSettings();
+  await ensureHubPermission(hub.url);
+  const res = await fetch(`${hub.url.replace(/\/+$/, '')}/snippet`);
+  if (!res.ok) throw new Error(`Hub ${res.status}`);
+  return res.text();
+}
+
 export async function testConnection(url: string) {
   await ensureHubPermission(url);
   return hubFetch<{ ok: boolean; version: string; dataDir: string }>(url, '/health');

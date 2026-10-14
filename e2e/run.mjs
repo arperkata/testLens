@@ -356,6 +356,29 @@ try {
   }
 
   // ---- side panel renders ----
+  // ---- API tab of the incidents view: Hub status, snippet, import, API incidents ----
+  {
+    await cfgPage.evaluate(() => chrome.storage.session.remove('tl.activeIncident'));
+    const list = await context.newPage();
+    await list.goto(`chrome-extension://${extId}/sidepanel.html`);
+    await list.waitForTimeout(1200);
+    const uiText = await list.textContent('body');
+    check(uiText.includes('UI testing') && uiText.includes('API testing'), 'incidents view has UI and API tabs');
+    await list.getByRole('button', { name: /API testing/ }).click();
+    await list.waitForTimeout(1500);
+    const apiText = await list.textContent('body');
+    check(apiText.includes('Local Hub') && apiText.includes('online at'), 'API tab shows the Hub online');
+    check(apiText.includes('Postman') && apiText.includes('Newman') && apiText.includes('Import file'), 'API tab offers Postman snippet, Newman command and file import');
+    await list.getByRole('button', { name: 'Show snippet' }).click();
+    await list.waitForTimeout(800);
+    const snip = await list.locator('pre').first().textContent();
+    check(snip.includes('TestLens snippet') && snip.includes(`localhost:${HUB_PORT}`), 'snippet loaded from the Hub with its port baked in');
+    check((await list.locator('.item').count()) >= 2, 'API tab lists the Hub and HAR incidents');
+    await list.screenshot({ path: path.join(outDir, 'sidepanel-api.png'), fullPage: true });
+    await list.close();
+    await cfgPage.evaluate((id) => chrome.storage.session.set({ 'tl.activeIncident': id, 'tl.panelMode': 'ui' }), incidentId);
+  }
+
   const panel = await context.newPage();
   await panel.goto(`chrome-extension://${extId}/sidepanel.html`);
   await panel.waitForTimeout(1500);

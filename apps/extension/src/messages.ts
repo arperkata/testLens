@@ -94,6 +94,7 @@ export type RuntimeRequest =
   | { type: 'tl:hub-status' }
   | { type: 'tl:hub-sync' }
   | { type: 'tl:hub-test'; url: string }
+  | { type: 'tl:hub-snippet' }
   | { type: 'tl:import-file'; name: string; text: string }
   | { type: 'tl:ai-test'; ai: import('./settings').AiSettings };
 

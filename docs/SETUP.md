@@ -233,6 +233,8 @@ What comes back is a suggestion. The Bug tab shows it beside the captured facts;
 
 API-testing tools have no browser to record, so TestLens gives them two entry points. Both feed the same pipeline as browser bugs: redaction, evidence engine, composer, AI suggestions, tracker preview and create, all in the side panel.
 
+**The API tab.** The side panel's incidents view has two tabs: **UI testing** (browser incidents) and **API testing**. The API tab is the control centre for this section: it shows whether the Hub is online, gives the start command with a copy button and downloadable start scripts (`.cmd` for Windows, `.sh` for macOS/Linux), detects the Hub the moment it comes up, and then offers the Postman snippet (with the Hub's port baked in), the Newman command, file import and the list of API incidents. The popup's **API** button opens the panel directly on this tab. A browser extension cannot launch a program, so starting the Hub remains a copy-paste into a terminal.
+
 **Local Hub (live push from Postman and Newman)**
 
 1. Start the Hub on the tester's machine:

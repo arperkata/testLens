@@ -466,6 +466,8 @@ export default defineBackground(() => {
         return hub.sync();
       case 'tl:hub-test':
         return hub.testConnection(req.url);
+      case 'tl:hub-snippet':
+        return hub.snippet();
       case 'tl:import-file':
         return hub.importFile(req.name, req.text);
       case 'tl:ai-test':
