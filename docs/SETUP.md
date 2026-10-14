@@ -237,13 +237,15 @@ API-testing tools have no browser to record, so TestLens gives them two entry po
 
 **Local Hub (live push from Postman and Newman)**
 
-1. Start the Hub on the tester's machine:
+1. Start the Hub on the tester's machine. The Hub is a single JavaScript file with no dependencies; the only requirement is Node.js 18 or newer (`node -v`). Testers do not need this repository. Three ways to get it:
 
-   ```bash
-   npx testlens-hub
-   ```
+   | How | Command | When |
+   | --- | --- | --- |
+   | npm (once the package is published) | `npx testlens-hub` | Default; the API tab shows this command and offers Windows/macOS start scripts |
+   | Single file from a TestLens release | `node testlens-hub.mjs` | No npm access or air-gapped: download `testlens-hub.mjs` once and share it like any file |
+   | From this repository | `npm run hub` (source) or `npm run hub:build` then `npm run hub:start` (bundle) | Developers |
 
-   or from this repository `npm run hub`. It listens on `http://localhost:7331`, keeps its data under `~/.testlens/hub`, and shows the Postman snippet at that URL. It holds no tracker credentials.
+   To produce the single file yourself: `npm run hub:build` writes `apps/hub/dist/testlens-hub.mjs` (about 200 KB) and `npm run test:hub` builds it and smoke-tests it outside the repo. To publish: `cd apps/hub && npm publish` (the `prepack` step builds the bundle; the package ships only that file and its README). It listens on `http://localhost:7331`, keeps its data under `~/.testlens/hub`, and shows the Postman snippet at that URL. It holds no tracker credentials.
 2. In TestLens settings → **5. API testing tools**, click **Connect & test** (grants the extension permission to call localhost) and keep **Pull new incidents automatically** on.
 3. **Postman**: open the collection → Scripts → Post-response (older versions: Tests), paste the snippet from the Hub page. It posts to the Hub only when the response is 4xx/5xx, a request error occurred, or a `pm.test` in that script failed. Set `pm.variables.set("TL_REPORT", "why")` before it runs to force a report for any request. The snippet logs "TestLens: incident sent" in the Postman console.
 4. **Newman (CLI/CI)**: install `integrations/postman/newman-reporter-testlens` and run `newman run collection.json -r cli,testlens --reporter-testlens-hub http://localhost:7331`. Failed executions are delivered after the run finishes. Alternatively export `-r json --reporter-json-export run.json` and import the file.

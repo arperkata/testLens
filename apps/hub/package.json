@@ -1,17 +1,29 @@
 {
-  "name": "@testlens/hub",
+  "name": "testlens-hub",
   "version": "0.1.0",
-  "private": true,
+  "description": "TestLens Hub: local ingestion server that turns Postman, Newman and HAR evidence into reviewed bug reports via the TestLens browser extension",
+  "license": "MIT",
   "type": "module",
-  "description": "TestLens Hub: local ingestion server for API-testing tools (Postman, Newman, HAR imports)",
   "bin": {
-    "testlens-hub": "./bin/testlens-hub.mjs"
+    "testlens-hub": "./dist/testlens-hub.mjs"
   },
+  "files": [
+    "dist/testlens-hub.mjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["testlens", "postman", "newman", "har", "bug-report", "jira", "qa", "testing"],
   "scripts": {
+    "build": "node build.mjs",
+    "prepack": "node build.mjs",
     "start": "node --import tsx ./src/server.ts",
-    "dev": "node --import tsx --watch ./src/server.ts"
+    "dev": "node --import tsx --watch ./src/server.ts",
+    "start:dist": "node ./dist/testlens-hub.mjs"
   },
-  "dependencies": {
+  "dependencies": {},
+  "devDependencies": {
     "@testlens/schema": "*",
     "@testlens/redaction": "*",
     "@testlens/evidence-engine": "*",

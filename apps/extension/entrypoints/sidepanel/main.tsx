@@ -302,7 +302,7 @@ function ApiPanel({ hub, busy, onConnect, onSync, onImport, incidents, hasIncide
               <span className="muted" style={{ fontSize: 11 }}>Or save a double-click starter:</span>
               <button className="small" onClick={() => download('start-testlens-hub.cmd', cmdFile)}>Windows .cmd</button>
               <button className="small" onClick={() => download('start-testlens-hub.sh', shFile)}>macOS / Linux .sh</button>
-              <span className="muted" style={{ fontSize: 11 }}>From the repo: <code>npm run hub</code></span>
+              <span className="muted" style={{ fontSize: 11 }}>Needs Node 18+. No npm access? Run the single file from the TestLens release: <code>node testlens-hub.mjs</code></span>
             </div>
             {hub?.enabled && hub.error && <p className="muted" style={{ fontSize: 11, margin: '6px 0 0' }}>{hub.error}</p>}
           </div>

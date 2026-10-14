@@ -21,6 +21,8 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { pathToFileURL } from 'node:url';
+import { HUB_VERSION, LANDING_HTML, SNIPPET_JS } from './embedded';
 import type { Artifact, BugContext, BugDraft } from '@testlens/schema';
 import { DEFAULT_RULES, redactContext } from '@testlens/redaction';
 import { buildConsoleLog, buildHar, buildNetworkLog, runEvidenceEngine, selectedExchangeIds } from '@testlens/evidence-engine';
@@ -162,11 +164,13 @@ async function readBody(req: http.IncomingMessage): Promise<Buffer> {
   });
 }
 
+/** Snippet with this Hub's URL baked in (assets are embedded so the single-file build needs no repo). */
+function snippetForThisHub(): string {
+  return SNIPPET_JS.replace("'http://localhost:7331'", `'http://localhost:${PORT}'`);
+}
+
 async function landing(): Promise<string> {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const html = await fs.readFile(path.join(here, '..', 'public', 'index.html'), 'utf8');
-  const snippet = await fs.readFile(path.join(here, '..', '..', '..', 'integrations', 'postman', 'testlens-postman-snippet.js'), 'utf8').catch(() => '// snippet not found');
-  return html.replace('{{PORT}}', String(PORT)).replace('{{SNIPPET}}', snippet.replace(/</g, '&lt;'));
+  return LANDING_HTML.split('{{PORT}}').join(String(PORT)).replace('{{SNIPPET}}', snippetForThisHub().replace(/</g, '&lt;'));
 }
 
 export function createServer() {
@@ -175,13 +179,9 @@ export function createServer() {
       const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
       if (req.method === 'OPTIONS') return send(res, 204, '', 'text/plain');
       if (req.method === 'GET' && url.pathname === '/') return send(res, 200, await landing(), 'text/html; charset=utf-8');
-      if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, name: 'testlens-hub', version: '0.1.0', dataDir: DATA_DIR, port: PORT });
-      if (req.method === 'GET' && url.pathname === '/snippet') {
-        // the Postman snippet, with this Hub's URL baked in, for the extension's API tab
-        const here = path.dirname(fileURLToPath(import.meta.url));
-        const raw = await fs.readFile(path.join(here, '..', '..', '..', 'integrations', 'postman', 'testlens-postman-snippet.js'), 'utf8').catch(() => '');
-        return send(res, 200, raw.replace("'http://localhost:7331'", `'http://localhost:${PORT}'`), 'text/javascript; charset=utf-8');
-      }
+      if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, name: 'testlens-hub', version: HUB_VERSION, dataDir: DATA_DIR, port: PORT });
+      // the Postman snippet, with this Hub's URL baked in, for the extension's API tab
+      if (req.method === 'GET' && url.pathname === '/snippet') return send(res, 200, snippetForThisHub(), 'text/javascript; charset=utf-8');
 
       if (req.method === 'POST' && (url.pathname === '/ingest/postman' || url.pathname === '/import')) {
         const buf = await readBody(req);
@@ -225,9 +225,17 @@ export function createServer() {
   });
 }
 
-if (process.argv[1] && /server\.(ts|mjs|js)$/.test(process.argv[1])) {
+// Start when run directly (repo via tsx, the single-file bundle, or the bin shim); stay quiet when imported.
+const runDirectly = (() => {
+  try {
+    return Boolean(process.argv[1]) && (pathToFileURL(path.resolve(process.argv[1]!)).href === import.meta.url || /testlens-hub(\.mjs|\.js)?$|server\.(ts|mjs|js)$/.test(process.argv[1]!));
+  } catch {
+    return false;
+  }
+})();
+if (runDirectly && !process.env.TL_HUB_NO_LISTEN) {
   createServer().listen(PORT, '127.0.0.1', () => {
-    console.log(`TestLens Hub listening on http://localhost:${PORT}  (data: ${DATA_DIR})`);
-    console.log('Open that URL for the Postman snippet. Incidents appear in the TestLens side panel via "Sync from Hub".');
+    console.log(`TestLens Hub ${HUB_VERSION} listening on http://localhost:${PORT}  (data: ${DATA_DIR})`);
+    console.log('Open that URL for the Postman snippet. Incidents appear in the TestLens side panel → API testing.');
   });
 }
