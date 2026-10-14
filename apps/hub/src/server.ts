@@ -70,6 +70,9 @@ async function processContext(raw: BugContext, rawPayload: unknown, rawName: str
   const draft = withEvidenceIndex(compose(withArtifacts), withArtifacts);
   const inc: HubIncident = { incidentId: ctx.incidentId, createdAt: ctx.createdAt, source: ctx.source.connectorId, title: draft.summary, status: 'ready', context: withArtifacts, draft, files };
   await fs.writeFile(path.join(dir, 'incident.json'), JSON.stringify(inc), 'utf8');
+  // small summary next to the full record so listing never parses full contexts
+  const { context: _c, draft: _d, ...meta } = inc;
+  await fs.writeFile(path.join(dir, 'meta.json'), JSON.stringify(meta), 'utf8');
   return inc;
 }
 
@@ -91,9 +94,14 @@ async function listIncidents(): Promise<Omit<HubIncident, 'context' | 'draft'>[]
   const out: Omit<HubIncident, 'context' | 'draft'>[] = [];
   for (const id of ids) {
     try {
-      const inc = JSON.parse(await fs.readFile(path.join(root, id, 'incident.json'), 'utf8')) as HubIncident;
-      const { context: _c, draft: _d, ...rest } = inc;
-      out.push(rest);
+      // prefer the small meta.json; fall back to the full record for incidents written before it existed
+      try {
+        out.push(JSON.parse(await fs.readFile(path.join(root, id, 'meta.json'), 'utf8')) as Omit<HubIncident, 'context' | 'draft'>);
+      } catch {
+        const inc = JSON.parse(await fs.readFile(path.join(root, id, 'incident.json'), 'utf8')) as HubIncident;
+        const { context: _c, draft: _d, ...rest } = inc;
+        out.push(rest);
+      }
     } catch {
       /* skip broken */
     }

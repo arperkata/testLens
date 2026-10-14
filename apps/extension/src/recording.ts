@@ -146,6 +146,14 @@ export async function recordingState(tabId: number): Promise<RecordingState | un
   return (await readState())[tabId];
 }
 
+/**
+ * Stitch a tab's segments for [start,end] into one WebM blob stored under `blobId`, in the offscreen
+ * document. Returns null when there are no segments. Throws when the offscreen document is unavailable.
+ */
+export async function stitchInOffscreen(tabId: number, start: number, end: number, incidentId: string, blobId: string): Promise<{ start: number; end: number; bytes: number; packets: number } | null> {
+  return send<{ start: number; end: number; bytes: number; packets: number } | null>({ target: 'offscreen', type: 'stitch', tabId, start, end, incidentId, blobId });
+}
+
 export function recordingSupported(): boolean {
   return typeof chrome.tabCapture?.getMediaStreamId === 'function' && typeof chrome.offscreen?.createDocument === 'function';
 }

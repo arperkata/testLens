@@ -11,8 +11,27 @@ import { getBlob, getIncident, putBlob, putIncident, readRrweb, readVideoSegment
 import { loadSettings, type Settings } from './settings';
 import type { IncidentPatch, PageInfo } from './messages';
 import { renderViewerHtml } from './viewer-template';
-import { flushRecording, stopRecording } from './recording';
-import { stitchWebm } from './video/stitch';
+import { flushRecording, stitchInOffscreen, stopRecording } from './recording';
+
+/**
+ * Called when an incident becomes ready (browser capture, Hub sync or import). The background
+ * registers the optional AI pass here. A plain callback replaces `import()`, which Chrome does
+ * not allow inside extension service workers.
+ */
+let readyHook: ((incidentId: string) => Promise<void>) | undefined;
+export function setIncidentReadyHook(fn: (incidentId: string) => Promise<void>) {
+  readyHook = fn;
+}
+function fireReady(incidentId: string) {
+  if (!readyHook) return;
+  void readyHook(incidentId).catch(async (e) => {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Chrome's on-device model may only be reachable from extension pages; the side panel runs it then.
+    if (msg === 'RUN_IN_PAGE' || /not downloaded yet|turned off|No API key/.test(msg)) return;
+    const cur = await getIncident(incidentId);
+    if (cur) await putIncident({ ...cur, warnings: [...(cur.warnings ?? []), `AI analysis failed: ${msg}`] });
+  });
+}
 
 function hhmmss(ts: number) {
   const d = new Date(ts);
@@ -90,15 +109,16 @@ export async function finalizeIncident(incidentId: string): Promise<StoredIncide
     if (shot) artifacts.push(artifact(`${incidentId}:screenshot`, 'screenshot', 'screenshot.png', 'image/png', shot.size, 'not-applicable', undefined, def('screenshot')));
 
     // Video: stitch the segments overlapping the window into ONE playable file (no re-encoding).
+    // The muxing runs in the offscreen document so the service worker bundle stays small.
     // If stitching fails for any reason, fall back to attaching the segments individually.
     const segments = await readVideoSegments(inc.tabId, start, end);
     if (segments.length) {
       try {
-        const stitched = await stitchWebm(segments.map((s) => ({ blob: s.blob, start: s.start, end: s.end })));
         const id = `${incidentId}:video`;
-        await putBlob(id, incidentId, stitched.blob);
+        const stitched = await stitchInOffscreen(inc.tabId, start, end, incidentId, id);
+        if (!stitched) throw new Error('no segments returned');
         const name = `recording_${hhmmss(stitched.start)}-${hhmmss(stitched.end)}.webm`;
-        artifacts.push(artifact(id, 'video', name, 'video/webm', stitched.blob.size, 'unredacted', { start: stitched.start, end: stitched.end }, def('video')));
+        artifacts.push(artifact(id, 'video', name, 'video/webm', stitched.bytes, 'unredacted', { start: stitched.start, end: stitched.end }, def('video')));
       } catch (e) {
         inc.warnings = [...(inc.warnings ?? []), `Video stitching failed (${e instanceof Error ? e.message : String(e)}); attaching ${segments.length} segment(s) instead`];
         for (let i = 0; i < segments.length; i++) {
@@ -145,17 +165,7 @@ export async function finalizeIncident(incidentId: string): Promise<StoredIncide
     await putIncident({ ...inc, status: 'ready', context: withText.context, draft: withText.draft });
     void chrome.alarms.clear(`tl-finalize:${incidentId}`);
     // Optional AI pass runs after the incident is usable, so a slow or failing provider never blocks review.
-    if (settings.ai.enabled && settings.ai.autoRun) {
-      void import('./ai')
-        .then((m) => m.enhance(incidentId))
-        .catch(async (e) => {
-          const msg = e instanceof Error ? e.message : String(e);
-          // Chrome's on-device model may only be reachable from extension pages; the side panel runs it then.
-          if (msg === 'RUN_IN_PAGE' || /not downloaded yet/.test(msg)) return;
-          const cur = await getIncident(incidentId);
-          if (cur) await putIncident({ ...cur, warnings: [...(cur.warnings ?? []), `AI analysis failed: ${msg}`] });
-        });
-    }
+    if (settings.ai.enabled && settings.ai.autoRun) fireReady(incidentId);
     return getIncident(incidentId);
   } catch (e) {
     const msg = e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : String(e);
@@ -219,7 +229,9 @@ export async function patchIncident(incidentId: string, patch: IncidentPatch): P
   }
   if (patch.draft && inc.draft) inc.draft = { ...inc.draft, ...patch.draft };
   if (inc.context && inc.draft) {
-    const withText = await writeTextArtifacts(inc as StoredIncident & { context: BugContext; draft: BugDraft });
+    // Toggling attachments does not change logs or HARs; regenerate only the viewer and the evidence index then.
+    const viewerOnly = Boolean(patch.artifactIncludes) && !patch.itemIncludes && !patch.draft && patch.note === undefined;
+    const withText = await writeTextArtifacts(inc as StoredIncident & { context: BugContext; draft: BugDraft }, { viewerOnly });
     inc.context = withText.context;
     inc.draft = withText.draft;
   }
@@ -261,11 +273,7 @@ export async function createIncidentFromContext(
     const { context, draft } = await process(prepared, settings);
     const withText = await writeTextArtifacts({ ...base, context, draft });
     await putIncident({ ...base, status: 'ready', context: withText.context, draft: withText.draft });
-    if (settings.ai.enabled && settings.ai.autoRun) {
-      void import('./ai')
-        .then((m) => m.enhance(incidentId))
-        .catch(() => undefined);
-    }
+    if (settings.ai.enabled && settings.ai.autoRun) fireReady(incidentId);
   } catch (e) {
     await putIncident({ ...base, status: 'error', error: e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : String(e) });
   }
@@ -334,7 +342,7 @@ function pickUserEdited(current: BugDraft, fresh: BugDraft): Partial<BugDraft> {
 // Text artifacts (regenerated whenever the context changes)
 // ---------------------------------------------------------------------------
 
-async function writeTextArtifacts(inc: StoredIncident & { context: BugContext; draft: BugDraft }): Promise<{ context: BugContext; draft: BugDraft }> {
+async function writeTextArtifacts(inc: StoredIncident & { context: BugContext; draft: BugDraft }, opts: { viewerOnly?: boolean } = {}): Promise<{ context: BugContext; draft: BugDraft }> {
   const ctx = inc.context;
   const id = inc.incidentId;
   const includes = Object.fromEntries(ctx.artifacts.map((a) => [a.kind, a.include]));
@@ -350,10 +358,15 @@ async function writeTextArtifacts(inc: StoredIncident & { context: BugContext; d
     // keep the tester's earlier choice if the artifact already existed; otherwise apply the configured default
     text.push({ ...artifact(aid, kind, fileName, mime, blob.size, 'redacted'), include: includes[kind] ?? defaults[kind] ?? true });
   };
-  await add('console-log', 'console.log', 'text/plain', buildConsoleLog(ctx));
-  await add('network-log', 'network.log', 'text/plain', buildNetworkLog(ctx));
-  await add('har-focused', 'network-focused.har', 'application/json', buildHar(ctx, selectedExchangeIds(ctx)));
-  await add('har', 'network-full.har', 'application/json', buildHar(ctx));
+  if (opts.viewerOnly) {
+    // Only attachment selection changed: the logs and HARs are unaffected, so reuse them as they are.
+    text.push(...ctx.artifacts.filter((a) => REGENERATED.has(a.kind) && a.kind !== 'incident-viewer'));
+  } else {
+    await add('console-log', 'console.log', 'text/plain', buildConsoleLog(ctx));
+    await add('network-log', 'network.log', 'text/plain', buildNetworkLog(ctx));
+    await add('har-focused', 'network-focused.har', 'application/json', buildHar(ctx, selectedExchangeIds(ctx)));
+    await add('har', 'network-full.har', 'application/json', buildHar(ctx));
+  }
 
   // viewer: embed screenshot + rrweb
   const shot = await getBlob(`${id}:screenshot`);

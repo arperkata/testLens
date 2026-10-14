@@ -14,14 +14,16 @@ import { MarkupEditor } from '../../src/ui/MarkupEditor';
 
 type Incident = StoredIncident;
 
+type IncidentRow = import('../../src/buffer/db').IncidentSummary;
+
 function App() {
-  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [incidents, setIncidents] = useState<IncidentRow[]>([]);
   const [activeId, setActiveId] = useState<string>();
   const [incident, setIncident] = useState<Incident>();
   const [error, setError] = useState<string>();
 
   const refreshList = useCallback(async () => {
-    setIncidents(await sendRuntime<Incident[]>({ type: 'tl:list-incidents' }));
+    setIncidents(await sendRuntime<IncidentRow[]>({ type: 'tl:list-incidents' }));
   }, []);
 
   const load = useCallback(async (id: string) => {
@@ -88,7 +90,7 @@ function App() {
 // ---------------------------------------------------------------------------
 
 /** Incident list with the two API-testing entry points: pull from the local Hub, or import a file. */
-function IncidentList({ incidents, onOpen, onRefresh }: { incidents: Incident[]; onOpen: (id: string) => void; onRefresh: () => Promise<void> }) {
+function IncidentList({ incidents, onOpen, onRefresh }: { incidents: IncidentRow[]; onOpen: (id: string) => void; onRefresh: () => Promise<void> }) {
   const [hub, setHub] = useState<import('../../src/hub').HubStatus>();
   const [busy, setBusy] = useState<string>();
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string }>();
@@ -131,7 +133,7 @@ function IncidentList({ incidents, onOpen, onRefresh }: { incidents: Incident[];
     }
   };
 
-  const originBadge = (i: Incident) => (i.origin === 'hub' ? <span className="badge">{i.context?.source.tool.name ?? 'Hub'}</span> : i.origin === 'import' ? <span className="badge">{i.context?.source.tool.name ?? 'import'}</span> : null);
+  const originBadge = (i: IncidentRow) => (i.origin === 'hub' ? <span className="badge">{i.toolName ?? 'Hub'}</span> : i.origin === 'import' ? <span className="badge">{i.toolName ?? 'import'}</span> : null);
 
   return (
     <div style={{ padding: 12 }}>
@@ -156,7 +158,7 @@ function IncidentList({ incidents, onOpen, onRefresh }: { incidents: Incident[];
           <div key={i.incidentId} className="item" style={{ cursor: 'pointer' }} onClick={() => onOpen(i.incidentId)}>
             <div className="body">
               <div className="title">
-                {i.draft?.summary ?? i.tab.title ?? i.tab.url} {originBadge(i)}
+                {i.summary ?? i.tab.title ?? i.tab.url} {originBadge(i)}
               </div>
               <div className="reasons">
                 {new Date(i.triggerAt).toLocaleString()} · {i.status}
@@ -1193,7 +1195,7 @@ function TrackerTab({ incident, setIncident, onPatch }: { incident: Incident; se
 }
 
 /** Created-issue record, tolerating incidents stored by Jira-only builds. */
-function createdOf(i: Incident): { key: string; url: string; attachments: { fileName: string; ok: boolean; error?: string }[] } | undefined {
+function createdOf(i: Pick<Incident, 'created' | 'jira'>): { key: string; url: string; attachments: { fileName: string; ok: boolean; error?: string }[] } | undefined {
   return i.created ?? i.jira;
 }
 

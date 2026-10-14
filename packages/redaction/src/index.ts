@@ -17,8 +17,12 @@ export const RULES_VERSION = '1.0';
 export interface RedactionRules {
   /** Header / query-param / JSON-key names (case-insensitive) whose values are always redacted. */
   sensitiveKeys: string[];
-  /** Regexes applied to free text (console args, bodies, URLs). Whole match is replaced. */
-  patterns: { id: string; regex: string; flags?: string }[];
+  /**
+   * Regexes applied to free text (console args, bodies, URLs). Whole match is replaced.
+   * `hint` is a cheap precondition: a substring (case-sensitive) that must be present, or
+   * 'digits13' for strings that need at least 13 digits. The regex is skipped when it cannot match.
+   */
+  patterns: { id: string; regex: string; flags?: string; hint?: string }[];
   /** Max body bytes retained; longer bodies are truncated (not a redaction, but enforced here). */
   maxBodyBytes: number;
 }
@@ -61,13 +65,13 @@ export const DEFAULT_RULES: RedactionRules = {
     'cardnumber',
   ],
   patterns: [
-    { id: 'jwt', regex: '\\beyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\b', flags: 'g' },
-    { id: 'bearer', regex: '\\b[Bb]earer\\s+[A-Za-z0-9._~+/=-]{16,}', flags: 'g' },
-    { id: 'aws-access-key', regex: '\\bAKIA[0-9A-Z]{16}\\b', flags: 'g' },
-    { id: 'openai-key', regex: '\\bsk-[A-Za-z0-9_-]{20,}\\b', flags: 'g' },
-    { id: 'github-token', regex: '\\bgh[pousr]_[A-Za-z0-9]{30,}\\b', flags: 'g' },
-    { id: 'slack-token', regex: '\\bxox[abprs]-[A-Za-z0-9-]{10,}\\b', flags: 'g' },
-    { id: 'credit-card', regex: '\\b(?:\\d[ -]?){13,19}\\b', flags: 'g' },
+    { id: 'jwt', regex: '\\beyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\b', flags: 'g', hint: 'eyJ' },
+    { id: 'bearer', regex: '\\b[Bb]earer\\s+[A-Za-z0-9._~+/=-]{16,}', flags: 'g', hint: 'earer' },
+    { id: 'aws-access-key', regex: '\\bAKIA[0-9A-Z]{16}\\b', flags: 'g', hint: 'AKIA' },
+    { id: 'openai-key', regex: '\\bsk-[A-Za-z0-9_-]{20,}\\b', flags: 'g', hint: 'sk-' },
+    { id: 'github-token', regex: '\\bgh[pousr]_[A-Za-z0-9]{30,}\\b', flags: 'g', hint: 'gh' },
+    { id: 'slack-token', regex: '\\bxox[abprs]-[A-Za-z0-9-]{10,}\\b', flags: 'g', hint: 'xox' },
+    { id: 'credit-card', regex: '\\b(?:\\d[ -]?){13,19}\\b', flags: 'g', hint: 'digits13' },
   ],
   maxBodyBytes: 256 * 1024,
 };
@@ -97,19 +101,50 @@ export function mask(value: string): string {
   return `«redacted:${fnv1a(value)}»`;
 }
 
-function isSensitiveKey(key: string, rules: RedactionRules): boolean {
-  const k = key.toLowerCase().replace(/[-_\s]/g, '');
-  return rules.sensitiveKeys.some((s) => k === s.replace(/[-_\s]/g, '') || k.endsWith(s.replace(/[-_\s]/g, '')));
+/** Normalised sensitive keys, computed once per rules object (was 38 regex replaces per header before). */
+const keyCache = new WeakMap<RedactionRules, { exact: Set<string>; suffixes: string[] }>();
+function normalizeKey(k: string) {
+  return k.toLowerCase().replace(/[-_\s]/g, '');
+}
+function sensitiveKeys(rules: RedactionRules) {
+  let c = keyCache.get(rules);
+  if (!c) {
+    const norm = rules.sensitiveKeys.map(normalizeKey);
+    c = { exact: new Set(norm), suffixes: norm };
+    keyCache.set(rules, c);
+  }
+  return c;
 }
 
-const compiledCache = new WeakMap<RedactionRules, { id: string; re: RegExp }[]>();
+function isSensitiveKey(key: string, rules: RedactionRules): boolean {
+  const k = normalizeKey(key);
+  const { exact, suffixes } = sensitiveKeys(rules);
+  if (exact.has(k)) return true;
+  for (const s of suffixes) if (k.endsWith(s)) return true;
+  return false;
+}
+
+const compiledCache = new WeakMap<RedactionRules, { id: string; re: RegExp; hint?: string }[]>();
 function compiled(rules: RedactionRules) {
   let c = compiledCache.get(rules);
   if (!c) {
-    c = rules.patterns.map((p) => ({ id: p.id, re: new RegExp(p.regex, p.flags ?? 'g') }));
+    c = rules.patterns.map((p) => ({ id: p.id, re: new RegExp(p.regex, p.flags ?? 'g'), hint: p.hint }));
     compiledCache.set(rules, c);
   }
   return c;
+}
+
+const DIGIT_RUN = /\d/g;
+/** Cheap precondition so most strings never touch a regex. */
+function mayMatch(text: string, hint: string | undefined): boolean {
+  if (!hint) return true;
+  if (hint === 'digits13') {
+    let n = 0;
+    DIGIT_RUN.lastIndex = 0;
+    while (DIGIT_RUN.exec(text)) if (++n >= 13) return true;
+    return false;
+  }
+  return text.includes(hint);
 }
 
 export function redactHeaders(headers: Header[], rules: RedactionRules, stats: RedactionStats): Header[] {
@@ -147,8 +182,10 @@ export function redactUrl(url: string, rules: RedactionRules, stats: RedactionSt
 }
 
 export function redactText(text: string, rules: RedactionRules, stats: RedactionStats, where = 'text'): string {
+  if (text.length < 8) return text; // nothing in the default rules can match shorter strings
   let out = text;
-  for (const { id, re } of compiled(rules)) {
+  for (const { id, re, hint } of compiled(rules)) {
+    if (!mayMatch(out, hint)) continue;
     re.lastIndex = 0;
     out = out.replace(re, (m) => {
       bump(stats, `pattern.${id}@${where}`);

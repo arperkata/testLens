@@ -85,10 +85,14 @@ export interface VideoSegment {
   blob: Blob;
 }
 
+/** Lightweight row for the incidents list, so listing never loads full contexts (which can be MBs each). */
+export type IncidentSummary = Pick<StoredIncident, 'incidentId' | 'createdAt' | 'triggerAt' | 'status' | 'tab' | 'note' | 'created' | 'jira' | 'origin' | 'hubIncidentId'> & { summary?: string; toolName?: string };
+
 interface TLSchema extends DBSchema {
   events: { key: string; value: StoredEvent; indexes: { 'by-tab-ts': [number, number]; 'by-ts': number } };
   rrweb: { key: string; value: RrwebChunk; indexes: { 'by-tab-ts': [number, number]; 'by-ts': number } };
   incidents: { key: string; value: StoredIncident; indexes: { 'by-created': number } };
+  incidentIndex: { key: string; value: IncidentSummary; indexes: { 'by-created': number } };
   blobs: { key: string; value: StoredBlob; indexes: { 'by-incident': string } };
   video: { key: string; value: VideoSegment; indexes: { 'by-tab-start': [number, number]; 'by-end': number } };
 }
@@ -97,8 +101,19 @@ let dbPromise: Promise<IDBPDatabase<TLSchema>> | undefined;
 
 export function db(): Promise<IDBPDatabase<TLSchema>> {
   if (!dbPromise) {
-    dbPromise = openDB<TLSchema>('testlens', 2, {
-      upgrade(d, oldVersion) {
+    dbPromise = openDB<TLSchema>('testlens', 3, {
+      upgrade(d, oldVersion, _newVersion, tx) {
+        if (oldVersion < 3) {
+          const ix = d.createObjectStore('incidentIndex', { keyPath: 'incidentId' });
+          ix.createIndex('by-created', 'createdAt');
+          // backfill from existing incidents (v1/v2 databases)
+          if (oldVersion >= 1) {
+            void (async () => {
+              const all = await tx.objectStore('incidents').getAll();
+              for (const inc of all) void tx.objectStore('incidentIndex').put(summarize(inc));
+            })();
+          }
+        }
         if (oldVersion < 1) {
           const ev = d.createObjectStore('events', { keyPath: 'key' });
           ev.createIndex('by-tab-ts', ['tabId', 'ts']);
@@ -332,24 +347,46 @@ export async function clearTab(tabId: number) {
 // Incidents & blobs
 // ---------------------------------------------------------------------------
 
+export function summarize(i: StoredIncident): IncidentSummary {
+  return {
+    incidentId: i.incidentId,
+    createdAt: i.createdAt,
+    triggerAt: i.triggerAt,
+    status: i.status,
+    tab: i.tab,
+    note: i.note,
+    created: i.created,
+    jira: i.jira,
+    origin: i.origin,
+    hubIncidentId: i.hubIncidentId,
+    summary: i.draft?.summary,
+    toolName: i.context?.source.tool.name,
+  };
+}
+
 export async function putIncident(i: StoredIncident) {
   const d = await db();
-  await d.put('incidents', i);
+  const tx = d.transaction(['incidents', 'incidentIndex'], 'readwrite');
+  void tx.objectStore('incidents').put(i);
+  void tx.objectStore('incidentIndex').put(summarize(i));
+  await tx.done;
 }
 export async function getIncident(id: string) {
   const d = await db();
   return d.get('incidents', id);
 }
-export async function listIncidents(): Promise<StoredIncident[]> {
+/** Newest first. Reads the small index only; full contexts are loaded per incident on open. */
+export async function listIncidents(): Promise<IncidentSummary[]> {
   const d = await db();
-  const all = await d.getAllFromIndex('incidents', 'by-created');
-  return all.reverse().map((i) => ({ ...i, context: undefined })); // list view omits heavy context
+  const all = await d.getAllFromIndex('incidentIndex', 'by-created');
+  return all.reverse();
 }
 export async function deleteIncident(id: string) {
   const d = await db();
   const keys = await d.getAllKeysFromIndex('blobs', 'by-incident', id);
-  const tx = d.transaction(['incidents', 'blobs'], 'readwrite');
+  const tx = d.transaction(['incidents', 'incidentIndex', 'blobs'], 'readwrite');
   void tx.objectStore('incidents').delete(id);
+  void tx.objectStore('incidentIndex').delete(id);
   for (const k of keys) void tx.objectStore('blobs').delete(k);
   await tx.done;
 }
@@ -363,6 +400,6 @@ export async function getBlob(id: string): Promise<Blob | undefined> {
 }
 export async function purgeIncidents(olderThan: number) {
   const d = await db();
-  const old = await d.getAllFromIndex('incidents', 'by-created', IDBKeyRange.upperBound(olderThan));
+  const old = await d.getAllFromIndex('incidentIndex', 'by-created', IDBKeyRange.upperBound(olderThan));
   for (const i of old) await deleteIncident(i.incidentId);
 }

@@ -103,7 +103,9 @@ export type OffscreenRequest =
   | { target: 'offscreen'; type: 'start-synthetic'; tabId: number; options: RecordingOptions }
   | { target: 'offscreen'; type: 'stop'; tabId: number }
   | { target: 'offscreen'; type: 'flush'; tabId: number }
-  | { target: 'offscreen'; type: 'status' };
+  | { target: 'offscreen'; type: 'status' }
+  /** Stitch the segments of a tab overlapping [start,end] into one WebM stored under `blobId` (keeps the muxer out of the service worker). */
+  | { target: 'offscreen'; type: 'stitch'; tabId: number; start: number; end: number; incidentId: string; blobId: string };
 
 export interface RecordingOptions {
   segmentMs: number;

@@ -6,7 +6,8 @@ import { defineBackground } from 'wxt/sandbox';
 import { DEFAULT_RULES, mergeRules, type RedactionRules } from '@testlens/redaction';
 import { clearTab, expire, deleteIncident, getBlob, getIncident, listIncidents, putEvent, putRrweb, purgeIncidents, tabCounts } from '../src/buffer/db';
 import { ingestPageExchange, installNetworkCapture } from '../src/capture/network';
-import { finalizeIncident, patchIncident, redactionTotals, rememberPageInfo, replaceScreenshot, rerunEngine, startIncident } from '../src/incident';
+import { finalizeIncident, patchIncident, redactionTotals, rememberPageInfo, replaceScreenshot, rerunEngine, setIncidentReadyHook, startIncident } from '../src/incident';
+import { newStats, redactText } from '@testlens/redaction';
 import * as tracker from '../src/tracker';
 import * as ai from '../src/ai';
 import * as hub from '../src/hub';
@@ -26,6 +27,10 @@ export default defineBackground(() => {
 
   const settingsReady = loadSettings().then((s) => applySettings(s));
   onSettingsChanged((s) => void applySettings(s));
+  // Optional AI pass once an incident is ready (a callback: extension service workers cannot use import()).
+  setIncidentReadyHook(async (incidentId) => {
+    await ai.enhance(incidentId);
+  });
 
   async function applySettings(s: Settings) {
     settings = s;
@@ -195,12 +200,10 @@ export default defineBackground(() => {
   }
 
   function redactTextSafe(s: string) {
-    // lightweight capture-time pass; full export-time pass happens at finalize
+    // capture-time pass with the shared, pre-compiled rules (no per-event RegExp construction);
+    // the full export-time pass happens at finalize
     try {
-      // dynamic import avoided for SW simplicity; reuse rules via regexes
-      let out = s;
-      for (const p of rules.patterns) out = out.replace(new RegExp(p.regex, p.flags ?? 'g'), '«redacted»');
-      return out;
+      return redactText(s, rules, newStats(), 'console');
     } catch {
       return s;
     }
