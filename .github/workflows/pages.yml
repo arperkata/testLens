@@ -1,9 +1,17 @@
-# Publishes site/ to GitHub Pages (gh-pages branch) whenever it changes on main.
-name: Publish site
+# Publishes the explainer site and the self-contained Hub bundle to GitHub Pages (gh-pages branch).
+# The extension's API tab points users at https://<owner>.github.io/<repo>/testlens-hub.mjs.
+name: Publish site and Hub
 on:
   push:
     branches: [main]
-    paths: ['site/**', '.github/workflows/pages.yml']
+    paths:
+      - 'site/**'
+      - 'apps/hub/**'
+      - 'packages/**'
+      - 'integrations/postman/testlens-postman-snippet.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 permissions:
   contents: write
@@ -12,13 +20,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Push site/ to gh-pages
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Build the single-file Hub
+        run: npm run hub:build
+      - name: Smoke-test the bundle
+        run: node e2e/hub-bundle-smoke.mjs
+      - name: Assemble the Pages tree
         run: |
-          cd site
-          touch .nojekyll
+          rm -rf .pages && mkdir .pages
+          cp site/index.html site/logo-transparent.png .pages/
+          cp apps/hub/dist/testlens-hub.mjs .pages/
+          node -e "const p=require('./apps/hub/package.json');require('fs').writeFileSync('.pages/hub-version.json',JSON.stringify({name:p.name,version:p.version,file:'testlens-hub.mjs',built:new Date().toISOString(),commit:process.env.GITHUB_SHA}))"
+          touch .pages/.nojekyll
+      - name: Push to gh-pages
+        run: |
+          cd .pages
           git init -b gh-pages
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Publish site from ${GITHUB_SHA::7}"
+          git commit -m "Publish site + Hub from ${GITHUB_SHA::7}"
           git push --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages

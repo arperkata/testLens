@@ -6,7 +6,7 @@ import type { BugContext, BugDraft, EvidenceItem, FocalEvent } from '@testlens/s
 import { getBlob, type StoredIncident } from '../../src/buffer/db';
 import type { TrackerPreview } from '../../src/tracker';
 import { sendRuntime } from '../../src/messages';
-import { loadSettings, saveSettings } from '../../src/settings';
+import { HUB_DOWNLOAD_URL, loadSettings, saveSettings } from '../../src/settings';
 import type { FieldSchema, IssueTypeRef, ProjectRef } from '@testlens/trackers-core';
 import { buildMappingFields, optionalFieldsWithValues, requiredFields, stringValues, withDefaults } from '../../src/jira-mapping';
 import { FieldControl } from '../../src/ui/FieldControl';
@@ -266,10 +266,34 @@ function ApiPanel({ hub, busy, onConnect, onSync, onImport, incidents, hasIncide
     setShowSnippet((v) => !v);
   };
   const online = Boolean(hub?.enabled && hub.reachable);
-  const startCmd = `npx testlens-hub`;
-  const startCmdPort = port === '7331' ? startCmd : `TL_HUB_PORT=${port} npx testlens-hub`;
-  const cmdFile = `@echo off\r\ntitle TestLens Hub\r\necho Starting TestLens Hub on ${url} ...\r\n${port === '7331' ? '' : `set TL_HUB_PORT=${port}\r\n`}npx testlens-hub\r\npause\r\n`;
-  const shFile = `#!/bin/sh\n# TestLens Hub — API-testing ingestion server\n${port === '7331' ? '' : `export TL_HUB_PORT=${port}\n`}exec npx testlens-hub\n`;
+  // The Hub is one dependency-free file served from the TestLens site. The commands download it once
+  // (next to where they run) and start it with Node; the start scripts reuse the file on later runs.
+  const isWindows = /Win/i.test(navigator.platform);
+  const portEnvWin = port === '7331' ? '' : `set TL_HUB_PORT=${port} && `;
+  const portEnvSh = port === '7331' ? '' : `TL_HUB_PORT=${port} `;
+  const startCmdPort = isWindows
+    ? `curl.exe -L -o testlens-hub.mjs ${HUB_DOWNLOAD_URL} && ${portEnvWin}node testlens-hub.mjs`
+    : `curl -L -o testlens-hub.mjs ${HUB_DOWNLOAD_URL} && ${portEnvSh}node testlens-hub.mjs`;
+  const cmdFile = [
+    '@echo off',
+    'title TestLens Hub',
+    'cd /d "%~dp0"',
+    'where node >nul 2>nul || (echo Node.js 18+ is required: https://nodejs.org && pause && exit /b 1)',
+    `if not exist testlens-hub.mjs (echo Downloading TestLens Hub... && curl.exe -L -o testlens-hub.mjs ${HUB_DOWNLOAD_URL})`,
+    port === '7331' ? '' : `set TL_HUB_PORT=${port}`,
+    `echo Starting TestLens Hub on ${url} (close this window to stop)`,
+    'node testlens-hub.mjs',
+    'pause',
+  ].filter(Boolean).join('\r\n') + '\r\n';
+  const shFile = [
+    '#!/bin/sh',
+    '# TestLens Hub: API-testing ingestion server (one file, needs Node.js 18+)',
+    'cd "$(dirname "$0")"',
+    'command -v node >/dev/null 2>&1 || { echo "Node.js 18+ is required: https://nodejs.org"; exit 1; }',
+    `[ -f testlens-hub.mjs ] || curl -L -o testlens-hub.mjs ${HUB_DOWNLOAD_URL}`,
+    port === '7331' ? '' : `export TL_HUB_PORT=${port}`,
+    'exec node testlens-hub.mjs',
+  ].filter(Boolean).join('\n') + '\n';
   const newmanCmd = `newman run collection.json -e env.json -r cli,testlens --reporter-testlens-hub ${url}`;
 
   return (
@@ -292,7 +316,7 @@ function ApiPanel({ hub, busy, onConnect, onSync, onImport, incidents, hasIncide
         {!online && (
           <div style={{ marginTop: 8 }}>
             <p className="muted" style={{ margin: '0 0 6px' }}>
-              The Hub is a small server on this machine that receives evidence from API tools. A browser extension cannot start it, so run this once in a terminal (needs Node.js). This tab detects it as soon as it is up.
+              The Hub is a small server on this machine that receives evidence from API tools. It is a single 200 KB file; the only requirement is <a href="https://nodejs.org" target="_blank" rel="noreferrer">Node.js 18+</a>. A browser extension cannot start it, so run this once in a terminal (it downloads the file, then starts it). This tab detects it as soon as it is up.
             </p>
             <div className="row" style={{ gap: 6 }}>
               <code className="mono" style={{ padding: '6px 10px', background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 6 }}>{startCmdPort}</code>
@@ -302,7 +326,7 @@ function ApiPanel({ hub, busy, onConnect, onSync, onImport, incidents, hasIncide
               <span className="muted" style={{ fontSize: 11 }}>Or save a double-click starter:</span>
               <button className="small" onClick={() => download('start-testlens-hub.cmd', cmdFile)}>Windows .cmd</button>
               <button className="small" onClick={() => download('start-testlens-hub.sh', shFile)}>macOS / Linux .sh</button>
-              <span className="muted" style={{ fontSize: 11 }}>Needs Node 18+. No npm access? Run the single file from the TestLens release: <code>node testlens-hub.mjs</code></span>
+              <span className="muted" style={{ fontSize: 11 }}>Save it next to where the Hub should live and double-click. Or <a href={HUB_DOWNLOAD_URL} target="_blank" rel="noreferrer">download testlens-hub.mjs</a> yourself and run <code>node testlens-hub.mjs</code>.</span>
             </div>
             {hub?.enabled && hub.error && <p className="muted" style={{ fontSize: 11, margin: '6px 0 0' }}>{hub.error}</p>}
           </div>

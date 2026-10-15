@@ -119,6 +119,10 @@ export const DEFAULT_SETTINGS: Settings = {
   onboarded: false,
 };
 
+/** Where the self-contained Hub bundle is published (GitHub Pages, rebuilt by .github/workflows/pages.yml). */
+export const HUB_SITE_URL = 'https://arperkata.github.io/testLens/';
+export const HUB_DOWNLOAD_URL = `${HUB_SITE_URL}testlens-hub.mjs`;
+
 export const ARTIFACT_KIND_LABELS: Record<string, string> = {
   screenshot: 'Screenshot',
   video: 'Tab video segments',

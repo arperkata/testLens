@@ -6,9 +6,13 @@ The Hub holds no tracker credentials and never leaves your machine. It is a sing
 
 ## Run
 
+Download the single file and start it (Windows: use `curl.exe`):
+
 ```bash
-npx testlens-hub
+curl -L -o testlens-hub.mjs https://arperkata.github.io/testLens/testlens-hub.mjs && node testlens-hub.mjs
 ```
+
+The TestLens side panel's **API testing** tab shows this command for your OS and offers double-click start scripts. With npm, once published: `npx testlens-hub`.
 
 Options via environment variables:
 
@@ -16,8 +20,6 @@ Options via environment variables:
 | --- | --- | --- |
 | `TL_HUB_PORT` | `7331` | Port to listen on (127.0.0.1 only) |
 | `TL_HUB_DATA` | `~/.testlens/hub` | Where incidents and artifacts are stored |
-
-Without npm: download `testlens-hub.mjs` from a TestLens release and run `node testlens-hub.mjs`.
 
 ## Use
 

@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import '../../src/ui/base.css';
 import { resolveTokenHelpUrl, type FieldSchema, type IssueTypeRef, type ProjectRef, type TrackerDescriptor } from '@testlens/trackers-core';
 import { sendRuntime } from '../../src/messages';
-import { ARTIFACT_KIND_LABELS, DEFAULT_SETTINGS, describeEntry, exportSettings, importSettings, loadSettings, normalizeOriginInput, originsToMatchPatterns, saveSettings, type Settings, type TrackerSettings } from '../../src/settings';
+import { ARTIFACT_KIND_LABELS, DEFAULT_SETTINGS, HUB_DOWNLOAD_URL, describeEntry, exportSettings, importSettings, loadSettings, normalizeOriginInput, originsToMatchPatterns, saveSettings, type Settings, type TrackerSettings } from '../../src/settings';
 import { buildMappingFields, optionalFieldsWithValues, requiredFields, stringValues, withDefaults } from '../../src/jira-mapping';
 import { FieldControl } from '../../src/ui/FieldControl';
 import { ChromeBuiltinProvider, PROVIDER_PRESETS, type BuiltinAvailability } from '@testlens/ai';
@@ -695,9 +695,10 @@ function HubSection({ s, update, persist, setMsg }: SectionProps) {
         API-testing tools have no browser to record, so they push evidence to a small <b>local Hub</b> on your machine. The Hub normalises it; this extension pulls the incidents and handles review, AI and tracker creation exactly like browser bugs. No tracker credentials live in the Hub. HAR and Newman files can also be imported directly from the Incidents list without a Hub.
       </p>
       <div className="card" style={{ background: 'var(--panel2)' }}>
-        <b>Step 1 Ã¢â‚¬â€ start the Hub</b>
-        <pre style={{ margin: '6px 0 0' }}>npx testlens-hub</pre>
-        <p className="muted" style={{ margin: '4px 0 0' }}>From the TestLens repository: <code>npm run hub</code>. It listens on <code>http://localhost:7331</code> and shows the Postman snippet to paste into your collection.</p>
+        <b>Step 1: start the Hub</b>
+        <p className="muted" style={{ margin: '4px 0 0' }}>
+          The Hub is one 200 KB file; it only needs <a href="https://nodejs.org" target="_blank" rel="noreferrer">Node.js 18+</a>. The side panel's <b>API testing</b> tab gives the exact command for your system plus double-click start scripts, or <a href={HUB_DOWNLOAD_URL} target="_blank" rel="noreferrer">download testlens-hub.mjs</a> and run <code>node testlens-hub.mjs</code>. It listens on <code>http://localhost:7331</code> and shows the Postman snippet to paste into your collection.
+        </p>
       </div>
       <div className="row" style={{ gap: 12, marginTop: 8 }}>
         <div style={{ flex: 2, minWidth: 240 }}>
